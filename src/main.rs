@@ -137,7 +137,7 @@ fn tray_menu(hwnd: HWND) {
             ID_ABOUT => {
                 MessageBoxW(
                     hwnd,
-                    w!("Kuro Nesos 1.0.0\n\nA living notch for Windows.\nMusic, lyrics, focus timer, water reminder, to-do and file shelf.\n\nLyrics provided by LRCLIB (lrclib.net).\nhttps://github.com/SieghartSaladdin/kuro-nesos"),
+                    w!("Kuro Nesos 1.1.0\n\nA living notch for Windows.\nMusic, lyrics, focus timer, water reminder, to-do and file shelf.\n\nLyrics provided by LRCLIB (lrclib.net).\nhttps://github.com/SieghartSaladdin/kuro-nesos"),
                     w!("About Kuro Nesos"),
                     MB_OK | MB_ICONINFORMATION,
                 );
