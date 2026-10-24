@@ -21,9 +21,17 @@ use crate::model::{self, Dock, Settings, Task, Water, WaterEvent, GOALS};
 use crate::shelf::{self, Kind, Shelf};
 use crate::sys::{self, glyph, SysAlert};
 
-pub const WIN_W: f32 = 640.0;
-pub const WIN_H: f32 = 190.0;
-const CX: f32 = WIN_W / 2.0;
+#[path = "ui_vertical.rs"]
+mod vertical;
+
+/// Window size (logical px) for each dock: wide and short at the top edge, narrow and tall
+/// against a side edge (the side layouts are vertical, see ui_vertical.rs).
+pub fn window_size(dock: Dock) -> (f32, f32) {
+    match dock {
+        Dock::Top => (640.0, 190.0),
+        Dock::Left | Dock::Right => (270.0, 480.0),
+    }
+}
 const SHOULDER: f32 = 6.0;
 
 // palette
@@ -243,6 +251,8 @@ pub struct App {
     gfx: Option<Gfx>,
     gfx_lost: Option<Instant>,
     px: (u32, u32),
+    /// Window size in logical px (depends on the dock).
+    win: (f32, f32),
     fs_since: Option<Instant>,
     scale: f32,
     w: Spring,
@@ -358,12 +368,15 @@ impl App {
             media::set_demo(true);
         }
         let b = sys::battery();
+        let settings = Settings::load();
+        let win = window_size(settings.dock);
         let page = demo.page.unwrap_or(0).min(PAGES.len() - 1);
         App {
             hwnd,
             gfx: Some(gfx),
             gfx_lost: None,
             px,
+            win,
             fs_since: None,
             scale,
             w: Spring::new(150.0),
@@ -395,7 +408,7 @@ impl App {
             shelf: Shelf::load(),
             shelf_drag: false,
             press: None,
-            settings: Settings::load(),
+            settings,
             queue: VecDeque::new(),
             alert: None,
             mascot: MascotState::Off,
@@ -450,6 +463,10 @@ impl App {
     pub fn set_dock(&mut self, dock: Dock) {
         self.settings.dock = dock;
         self.settings.save();
+        self.win = window_size(dock);
+        self.px = ((self.win.0 * self.scale).round() as u32, (self.win.1 * self.scale).round() as u32);
+        // the swap chain has the window's size, so the renderer is rebuilt for the new one
+        self.gfx_lost = Instant::now().checked_sub(Duration::from_secs(1));
         self.region = (0, 0, 0, 0);
         self.dirty = true;
     }
@@ -457,9 +474,9 @@ impl App {
     /// Top-left of a w x h notch shape in window coordinates for the current dock.
     fn shape_pos(&self, w: f32, h: f32) -> (f32, f32) {
         match self.settings.dock {
-            Dock::Top => (CX - w / 2.0, 0.0),
-            Dock::Left => (0.0, (WIN_H - h) / 2.0),
-            Dock::Right => (WIN_W - w, (WIN_H - h) / 2.0),
+            Dock::Top => (self.win.0 / 2.0 - w / 2.0, 0.0),
+            Dock::Left => (0.0, (self.win.1 - h) / 2.0),
+            Dock::Right => (self.win.0 - w, (self.win.1 - h) / 2.0),
         }
     }
 
@@ -885,6 +902,9 @@ impl App {
     }
 
     fn shape_for(&self, m: Mode) -> (f32, f32, f32) {
+        if self.vertical() {
+            return self.shape_for_v(m);
+        }
         match m {
             Mode::Expanded => (420.0, 150.0, 28.0),
             Mode::Alert => {
@@ -919,8 +939,8 @@ impl App {
         let r = (
             ((sx - pad).max(0.0) * s) as i32,
             ((sy - pad).max(0.0) * s) as i32,
-            ((sx + w + pad).min(WIN_W) * s).ceil() as i32,
-            ((sy + h + pad).min(WIN_H) * s).ceil() as i32,
+            ((sx + w + pad).min(self.win.0) * s).ceil() as i32,
+            ((sy + h + pad).min(self.win.1) * s).ceil() as i32,
         );
         if r != self.region {
             self.region = r;
@@ -1016,8 +1036,9 @@ impl App {
     }
 
     pub fn wheel(&mut self, delta: i16) {
-        if PAGES[self.page] == Page::Todo && self.form.is_none() && self.tasks.len() > 3 {
-            let max = self.tasks.len() - 3;
+        let rows = self.todo_rows();
+        if PAGES[self.page] == Page::Todo && self.form.is_none() && self.tasks.len() > rows {
+            let max = self.tasks.len() - rows;
             self.task_scroll = if delta < 0 { (self.task_scroll + 1).min(max) } else { self.task_scroll.saturating_sub(1) };
         } else if self.form.is_none() {
             self.go_page(if delta < 0 { 1 } else { -1 });
@@ -1428,9 +1449,9 @@ impl App {
         let (x0, y0) = self.shape_pos(w, h);
         self.top.set(y0);
         let geom = match self.settings.dock {
-            Dock::Top => g.notch_geometry(CX, w, h, r, SHOULDER),
+            Dock::Top => g.notch_geometry(self.win.0 / 2.0, w, h, r, SHOULDER),
             Dock::Left => g.side_geometry(0.0, y0, w, h, r, SHOULDER, true),
-            Dock::Right => g.side_geometry(WIN_W, y0, w, h, r, SHOULDER, false),
+            Dock::Right => g.side_geometry(self.win.0, y0, w, h, r, SHOULDER, false),
         };
         if let Some(geom) = geom {
             g.fill_geometry(&geom, 0x000000, 1.0);
@@ -1439,15 +1460,28 @@ impl App {
             }
             g.push_clip(&geom);
             g.alpha.set(ease(self.content_a));
-            match self.shown {
-                Mode::Expanded => self.paint_expanded(x0),
-                Mode::Alert => self.paint_alert(x0, w),
-                Mode::Live => self.paint_live(x0, w, false),
-                Mode::Lyrics => self.paint_live(x0, w, true),
-                Mode::Timer => self.paint_timer_live(x0, w),
-                Mode::Mascot => self.paint_mascot(x0, y0, w, h),
-                Mode::Collapsed => self.paint_collapsed(x0, w, h),
-                Mode::Minimal => {}
+            if self.vertical() {
+                match self.shown {
+                    Mode::Expanded => self.paint_expanded_v(x0),
+                    Mode::Alert => self.paint_alert_v(x0, w, h),
+                    Mode::Live => self.paint_live_v(x0, w, h),
+                    Mode::Lyrics => self.paint_lyrics_v(x0, w, h),
+                    Mode::Timer => self.paint_timer_v(x0, w),
+                    Mode::Mascot => self.paint_mascot_v(x0, y0, w, h),
+                    Mode::Collapsed => self.paint_collapsed_v(x0, w, h),
+                    Mode::Minimal => {}
+                }
+            } else {
+                match self.shown {
+                    Mode::Expanded => self.paint_expanded(x0),
+                    Mode::Alert => self.paint_alert(x0, w),
+                    Mode::Live => self.paint_live(x0, w, false),
+                    Mode::Lyrics => self.paint_live(x0, w, true),
+                    Mode::Timer => self.paint_timer_live(x0, w),
+                    Mode::Mascot => self.paint_mascot(x0, y0, w, h),
+                    Mode::Collapsed => self.paint_collapsed(x0, w, h),
+                    Mode::Minimal => {}
+                }
             }
             g.alpha.set(1.0);
             self.origin(0.0, 0.0);
@@ -1657,24 +1691,7 @@ impl App {
             self.round_button(22.0, 69.0, 9.5, 0x3C3C3C, glyph::CHEV_L, 10.0, WHITE, Act::PagePrev);
             self.round_button(398.0, 69.0, 9.5, 0x3C3C3C, glyph::CHEV_R, 10.0, WHITE, Act::PageNext);
         }
-        // pagination: slate dots with a white indicator gliding between pages
-        let gap = 13.0;
-        let (ty, th) = (133.0, 12.0);
-        let cy = ty + th / 2.0;
-        let first = 210.0 - gap * (PAGES.len() as f32 - 1.0) / 2.0;
-        for i in 0..PAGES.len() {
-            let x = first + gap * i as f32;
-            let color = if self.hot(Act::Dot(i)) { 0xC8CDD5 } else { 0x5B6270 };
-            g.fill_circle(x, cy, 2.0, color, 1.0);
-            self.hit(x - gap / 2.0, ty - 4.0, gap, th + 8.0, Act::Dot(i));
-        }
-        // the indicator stretches a little while it travels
-        let pos = self.dot.v.clamp(-0.3, PAGES.len() as f32 - 0.7);
-        let travel = (pos - pos.round()).abs();
-        let iw = 12.0 + travel * 10.0;
-        let ix = first + gap * pos;
-        g.glow(ix, cy, 13.0, 6.0, WHITE, 0.12);
-        g.fill_rrect(ix - iw / 2.0, cy - 2.5, iw, 5.0, 2.5, WHITE, 1.0);
+        self.page_dots(210.0, 139.0);
     }
 
     fn header(&self) {

@@ -39,8 +39,9 @@
 
 ## Features
 
-- **Notch that lives on your screen.** A black pill hangs from the top edge (or sits against
-  the left/right edge) and expands into a panel when you hover it. Smooth spring animations,
+- **Notch that lives on your screen.** A black pill hangs from the top edge and expands into a
+  panel when you hover it. Docked to the left/right edge it turns vertical: a slim tab that
+  opens into a tall panel, so it never covers your browser tabs. Smooth spring animations,
   synced to your display's refresh rate (60/120/144 Hz).
 - **Music.** Works with any player that shows up in the Windows media flyout (Spotify,
   browsers, Apple Music, ...): title, artist, album art, progress with seeking, play/pause,

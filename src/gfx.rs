@@ -568,6 +568,21 @@ impl Gfx {
         unsafe { self.rt().DrawText(&wide, &f, &r, self.set(hex, a), D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL) };
     }
 
+    /// Height of `s` wrapped to `width` (same format as `text_box`).
+    pub fn text_height(&self, s: &str, width: f32, size: f32, weight: u32) -> f32 {
+        let wide: Vec<u16> = s.encode_utf16().collect();
+        let f = self.wrap_format(size, weight);
+        unsafe {
+            if let Ok(layout) = self.dwrite.CreateTextLayout(&wide, &f, width, 2000.0) {
+                let mut m = DWRITE_TEXT_METRICS::default();
+                if layout.GetMetrics(&mut m).is_ok() {
+                    return m.height;
+                }
+            }
+        }
+        size * 1.4
+    }
+
     pub fn measure(&self, s: &str, size: f32, weight: u32) -> f32 {
         let wide: Vec<u16> = s.encode_utf16().collect();
         let f = self.format(size, weight, Align::Left, false);

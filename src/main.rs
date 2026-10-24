@@ -34,7 +34,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use ui::{App, Demo, Effect, WIN_H, WIN_W};
+use ui::{App, Demo, Effect};
 
 /// Tray callback message and menu command IDs.
 const WM_TRAY: u32 = WM_APP + 9;
@@ -166,7 +166,8 @@ fn tray_menu(hwnd: HWND) {
 fn position(hwnd: HWND, dock: model::Dock) -> f32 {
     unsafe {
         let scale = GetDpiForWindow(hwnd).max(96) as f32 / 96.0;
-        let (w, h) = ((WIN_W * scale).round() as i32, (WIN_H * scale).round() as i32);
+        let (ww, wh) = ui::window_size(dock);
+        let (w, h) = ((ww * scale).round() as i32, (wh * scale).round() as i32);
         let (sw, sh) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
         let (x, y) = match dock {
             model::Dock::Top => ((sw - w) / 2, 0),
@@ -366,7 +367,8 @@ fn main() {
             return;
         };
         let scale = position(hwnd, model::Settings::load().dock);
-        let (pw, ph) = ((WIN_W * scale).round() as u32, (WIN_H * scale).round() as u32);
+        let (ww, wh) = ui::window_size(model::Settings::load().dock);
+        let (pw, ph) = ((ww * scale).round() as u32, (wh * scale).round() as u32);
         let gfx = match gfx::Gfx::new(hwnd, pw, ph, scale) {
             Ok(g) => g,
             Err(e) => {
