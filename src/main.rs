@@ -44,9 +44,7 @@ const ID_MASCOT: u32 = 3;
 const ID_ABOUT: u32 = 4;
 const ID_MINIMAL: u32 = 5;
 const ID_ROMAJI: u32 = 6;
-const ID_DOCK_TOP: u32 = 10;
-const ID_DOCK_LEFT: u32 = 11;
-const ID_DOCK_RIGHT: u32 = 12;
+const ID_RESET_POS: u32 = 7;
 const TIMER_ID: usize = 1;
 
 thread_local! {
@@ -111,12 +109,9 @@ fn tray_menu(hwnd: HWND) {
         let _ = AppendMenuW(menu, MF_STRING | check(s.pet), ID_MASCOT as usize, w!("Mascot"));
         let _ = AppendMenuW(menu, MF_STRING | check(s.minimal), ID_MINIMAL as usize, w!("Minimal notch"));
         let _ = AppendMenuW(menu, MF_STRING | check(s.romaji), ID_ROMAJI as usize, w!("Romaji lyrics"));
-        if let Ok(sub) = CreatePopupMenu() {
-            let _ = AppendMenuW(sub, MF_STRING | check(s.dock == model::Dock::Top), ID_DOCK_TOP as usize, w!("Top"));
-            let _ = AppendMenuW(sub, MF_STRING | check(s.dock == model::Dock::Left), ID_DOCK_LEFT as usize, w!("Left side"));
-            let _ = AppendMenuW(sub, MF_STRING | check(s.dock == model::Dock::Right), ID_DOCK_RIGHT as usize, w!("Right side"));
-            let _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, w!("Position"));
-        }
+        // the notch is moved by dragging its header; this brings it back to the top centre
+        let moved = s.dock != model::Dock::Top || (s.offset - 0.5).abs() > 0.001;
+        let _ = AppendMenuW(menu, MF_STRING | if moved { MF_ENABLED } else { MF_GRAYED }, ID_RESET_POS as usize, w!("Reset position"));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT as usize, w!("About Kuro Nesos"));
         let _ = AppendMenuW(menu, MF_STRING, ID_EXIT as usize, w!("Exit"));
@@ -136,14 +131,8 @@ fn tray_menu(hwnd: HWND) {
             ID_ROMAJI => {
                 with_app(|a| a.toggle_romaji());
             }
-            ID_DOCK_TOP | ID_DOCK_LEFT | ID_DOCK_RIGHT => {
-                let dock = match cmd.0 as u32 {
-                    ID_DOCK_LEFT => model::Dock::Left,
-                    ID_DOCK_RIGHT => model::Dock::Right,
-                    _ => model::Dock::Top,
-                };
-                with_app(|a| a.set_dock(dock));
-                position(hwnd, dock);
+            ID_RESET_POS => {
+                with_app(|a| a.reset_position());
             }
             ID_ABOUT => {
                 MessageBoxW(
@@ -161,22 +150,10 @@ fn tray_menu(hwnd: HWND) {
     }
 }
 
-/// Places the (fixed-size, mostly transparent) window: centred on the top edge, or
-/// vertically centred against the left/right edge of the primary screen.
-fn position(hwnd: HWND, dock: model::Dock) -> f32 {
-    unsafe {
-        let scale = GetDpiForWindow(hwnd).max(96) as f32 / 96.0;
-        let (ww, wh) = ui::window_size(dock);
-        let (w, h) = ((ww * scale).round() as i32, (wh * scale).round() as i32);
-        let (sw, sh) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
-        let (x, y) = match dock {
-            model::Dock::Top => ((sw - w) / 2, 0),
-            model::Dock::Left => (0, (sh - h) / 2),
-            model::Dock::Right => (sw - w, (sh - h) / 2),
-        };
-        let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
-        scale
-    }
+/// Places the (fixed-size, mostly transparent) window where the settings say.
+fn position(hwnd: HWND) -> f32 {
+    let s = with_app(|a| a.settings()).unwrap_or_else(model::Settings::load);
+    ui::place_window(hwnd, s.dock, s.offset)
 }
 
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -206,6 +183,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 with_app(|a| a.mouse_up(x, y));
                 run_effect(hwnd);
                 LRESULT(0)
+            }
+            WM_SETCURSOR if with_app(|a| a.grab_cursor()).unwrap_or(false) => {
+                if let Ok(c) = LoadCursorW(None, IDC_SIZEALL) {
+                    SetCursor(c);
+                }
+                LRESULT(1)
             }
             WM_MOUSEWHEEL => {
                 let delta = ((wp.0 >> 16) & 0xffff) as i16;
@@ -246,8 +229,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 LRESULT(0)
             }
             WM_DISPLAYCHANGE | WM_DPICHANGED => {
-                let dock = with_app(|a| a.settings().dock).unwrap_or(model::Dock::Top);
-                position(hwnd, dock);
+                position(hwnd);
                 LRESULT(0)
             }
             WM_DESTROY => {
@@ -351,7 +333,8 @@ fn main() {
         };
         RegisterClassExW(&wc);
         let Ok(hwnd) = CreateWindowExW(
-            WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            // layered + transparent: clicks go through the closed notch (see ui::set_click_through)
+            WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT,
             class,
             w!("Notch"),
             WS_POPUP,
@@ -366,7 +349,8 @@ fn main() {
         ) else {
             return;
         };
-        let scale = position(hwnd, model::Settings::load().dock);
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
+        let scale = position(hwnd);
         let (ww, wh) = ui::window_size(model::Settings::load().dock);
         let (pw, ph) = ((ww * scale).round() as u32, (wh * scale).round() as u32);
         let gfx = match gfx::Gfx::new(hwnd, pw, ph, scale) {

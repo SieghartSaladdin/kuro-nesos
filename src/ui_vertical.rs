@@ -191,6 +191,7 @@ impl App {
         let base_a = g.alpha.get();
         let top = self.top.get();
         self.origin(x0, top);
+        self.grab_strip(PW);
         self.header_v();
         g.alpha.set(base_a * (1.0 - (slide.abs() / 36.0) * 0.7));
         self.origin(x0 + slide * 0.6, top);

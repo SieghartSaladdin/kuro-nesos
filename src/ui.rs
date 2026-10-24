@@ -93,6 +93,8 @@ pub enum Act {
     TodoTitle,
     TodoTime,
     Alert(usize),
+    /// The panel header: drag it to move the notch along an edge or to another edge.
+    Grab,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -261,8 +263,22 @@ pub struct App {
     shown: Mode,
     content_a: f32,
     hover: bool,
-    hover_enter: Option<Instant>,
     hover_leave: Option<Instant>,
+    /// Whole-notch opacity: the closed notch fades while the cursor is over it.
+    ghost: f32,
+    /// The window takes mouse input; otherwise clicks go through to the window below.
+    solid: bool,
+    /// Cursor over the notch shape / within reach of it.
+    inside: bool,
+    near: bool,
+    /// Where and since when the cursor rests on the closed notch (it opens after a moment).
+    dwell: Option<(Instant, (f32, f32))>,
+    /// A mouse button was already down when the cursor arrived (a file is being dragged in).
+    drag_in: bool,
+    /// A click went through to the window below: stay closed until the cursor leaves.
+    blocked: bool,
+    /// Moving the notch by its header: (grab offset along the edge in px, moved yet, start).
+    drag: Option<(f32, bool, POINT)>,
     page: usize,
     slide: Spring,
     /// Animated pagination indicator position (page index).
@@ -385,8 +401,15 @@ impl App {
             shown: Mode::Collapsed,
             content_a: 1.0,
             hover: false,
-            hover_enter: None,
             hover_leave: None,
+            ghost: 1.0,
+            solid: false,
+            inside: false,
+            near: false,
+            dwell: None,
+            drag_in: false,
+            blocked: false,
+            drag: None,
             page,
             slide: Spring::new(0.0),
             dot: Spring::new(page as f32),
@@ -563,11 +586,23 @@ impl App {
             }
             moving = true;
         }
+        // the closed notch fades while the cursor is over it, so what is underneath shows
+        let ghost_to = if self.inside && !self.hover && !self.drag_in && !self.wants_input() { 0.16 } else { 1.0 };
+        if (self.ghost - ghost_to).abs() > 0.001 {
+            let step = dt * 7.0;
+            self.ghost = if ghost_to < self.ghost { (self.ghost - step).max(ghost_to) } else { (self.ghost + step).min(ghost_to) };
+            moving = true;
+        }
+        let solid = self.wants_input();
+        if solid != self.solid {
+            self.solid = solid;
+            set_click_through(self.hwnd, !solid);
+        }
         self.update_region();
 
         let sec = model::now().second;
         let live = self.live_animation();
-        let hovering_soon = self.hover_enter.is_some() || self.hover_leave.is_some();
+        let hovering_soon = self.dwell.is_some() || self.hover_leave.is_some();
         if self.fullscreen_hidden {
             // nothing is visible while a fullscreen app (e.g. a game) is in front
             self.interval = 250;
@@ -583,7 +618,14 @@ impl App {
         let sleeping = matches!(self.mascot, MascotState::Sleeping(t) if t.elapsed() > Duration::from_secs(1));
         // 60 fps only while something moves; idle clock and the slowly "breathing" sleeping
         // mascot are fine at 10 fps
-        self.interval = if moving || hovering_soon || (live && !sleeping) { 16 } else { 100 };
+        self.interval = if moving || hovering_soon || (live && !sleeping) {
+            16
+        } else if self.near && !self.hover {
+            // close to the notch: poll often enough to notice clicks that go through it
+            33
+        } else {
+            100
+        };
 
         // give unused memory back: after 3 s of calm (at most once a minute), and every
         // 2 minutes anyway (e.g. while music keeps the notch animating)
@@ -793,7 +835,7 @@ impl App {
     fn update_alerts(&mut self, now: Instant) {
         if let Some(a) = &self.alert {
             let born = a.born.unwrap_or(now);
-            let held = self.hover && a.big();
+            let held = (self.hover || self.inside) && a.big();
             if !held && now.duration_since(born) > a.ttl {
                 self.alert = None;
                 self.dirty = true;
@@ -851,22 +893,55 @@ impl App {
             self.hover = true;
             return;
         }
+        if self.drag.is_some() {
+            self.hover = true;
+            self.hover_leave = None;
+            return;
+        }
         let (x, y) = self.cursor_logical();
         let (w, h) = (self.w.v, self.h.v);
         let (sx, sy) = self.shape_pos(w, h);
         let inside = x >= sx - 4.0 && x <= sx + w + 4.0 && y >= sy - 4.0 && y <= sy + h + 6.0;
+        self.near = x >= sx - 40.0 && x <= sx + w + 40.0 && y >= sy - 40.0 && y <= sy + h + 40.0;
+        let (held, pressed) = mouse_buttons();
+        if inside != self.inside {
+            self.inside = inside;
+            self.drag_in = inside && held;
+            self.dirty = true;
+        }
         if inside {
             self.hover_leave = None;
             if !self.hover {
-                let t = *self.hover_enter.get_or_insert(now);
-                if now.duration_since(t) >= Duration::from_millis(70) {
+                // a click that went through to the window below: the user works there
+                if pressed && !self.drag_in && !self.solid {
+                    self.blocked = true;
+                }
+                let ctrl = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(windows::Win32::UI::Input::KeyboardAndMouse::VK_CONTROL.0 as i32) } < 0;
+                let (delay, radius) = if self.drag_in { (250, 14.0) } else { (400, 6.0) };
+                let open = if self.blocked || self.alert_solid() {
+                    self.dwell = None;
+                    false
+                } else if ctrl && !held {
+                    true
+                } else {
+                    // open only once the cursor rests on the notch, not when it passes over it
+                    match self.dwell {
+                        Some((t, (px, py))) if (x - px).abs() <= radius && (y - py).abs() <= radius => now.duration_since(t) >= Duration::from_millis(delay),
+                        _ => {
+                            self.dwell = Some((now, (x, y)));
+                            false
+                        }
+                    }
+                };
+                if open {
                     self.hover = true;
-                    self.hover_enter = None;
+                    self.dwell = None;
                     self.dirty = true;
                 }
             }
         } else {
-            self.hover_enter = None;
+            self.dwell = None;
+            self.blocked = false;
             if self.hover && self.form.is_none() && self.press.is_none() {
                 let t = *self.hover_leave.get_or_insert(now);
                 if now.duration_since(t) >= Duration::from_millis(320) {
@@ -878,6 +953,65 @@ impl App {
                 }
             }
         }
+    }
+
+    /// An alert with buttons takes clicks (and does not turn into the panel on hover).
+    fn alert_solid(&self) -> bool {
+        self.shown == Mode::Alert && self.alert.as_ref().map_or(false, |a| !a.actions.is_empty())
+    }
+
+    /// Whether the window should take mouse input right now.
+    fn wants_input(&self) -> bool {
+        self.hover || self.demo.pin || self.form.is_some() || self.shelf_drag || self.drag.is_some() || self.press.is_some() || self.alert_solid()
+    }
+
+    /// Size-all cursor over the header / while moving the notch.
+    pub fn grab_cursor(&self) -> bool {
+        self.drag.is_some() || self.hot == Some(Act::Grab)
+    }
+
+    /// Back to the middle of the top edge (tray menu).
+    pub fn reset_position(&mut self) {
+        self.settings.offset = 0.5;
+        if self.settings.dock != Dock::Top {
+            self.set_dock(Dock::Top);
+        } else {
+            self.settings.save();
+        }
+        place_window(self.hwnd, Dock::Top, 0.5);
+    }
+
+    /// Follows the cursor while the header is dragged: slides along the edge and jumps to
+    /// another edge once the cursor is clearly closer to it.
+    fn drag_to(&mut self, p: POINT) {
+        let Some((mut grab, moved, start)) = self.drag else { return };
+        let (sw, sh) = unsafe { (GetSystemMetrics(SM_CXSCREEN) as f32, GetSystemMetrics(SM_CYSCREEN) as f32) };
+        let (x, y) = (p.x as f32, p.y as f32);
+        let cur = self.settings.dock;
+        let dist = |d: Dock| match d {
+            Dock::Top => y,
+            Dock::Left => x,
+            Dock::Right => sw - x,
+        };
+        let best = [Dock::Top, Dock::Left, Dock::Right].into_iter().min_by(|a, b| dist(*a).total_cmp(&dist(*b))).unwrap_or(cur);
+        let dock = if best != cur && dist(best) + 48.0 * self.scale < dist(cur) { best } else { cur };
+        if dock != cur {
+            // the header sits in the middle of the top panel and near the top of a side panel
+            grab = if dock == Dock::Top { 0.0 } else { 200.0 * self.scale };
+            self.drag = Some((grab, moved, start));
+        }
+        let (along, len, half) = match dock {
+            Dock::Top => (x, sw, 210.0),
+            _ => (y, sh, 220.0),
+        };
+        let lo = (half * self.scale / len).min(0.5);
+        self.settings.offset = ((along + grab) / len).clamp(lo, 1.0 - lo);
+        if dock != cur {
+            self.set_dock(dock);
+        }
+        place_window(self.hwnd, dock, self.settings.offset);
+        self.region = (0, 0, 0, 0);
+        self.dirty = true;
     }
 
     fn target_mode(&self) -> Mode {
@@ -996,6 +1130,14 @@ impl App {
     }
 
     pub fn mouse_move(&mut self, px: i32, py: i32) {
+        if let Some((grab, moved, start)) = self.drag {
+            let p = cursor_screen();
+            if moved || (p.x - start.x).abs() + (p.y - start.y).abs() > 6 {
+                self.drag = Some((grab, true, start));
+                self.drag_to(p);
+            }
+            return;
+        }
         let (x, y) = (px as f32 / self.scale, py as f32 / self.scale);
         self.mouse = (x, y);
         let hot = self.hit_at(x, y);
@@ -1016,6 +1158,17 @@ impl App {
     pub fn mouse_down(&mut self, px: i32, py: i32) {
         let (x, y) = (px as f32 / self.scale, py as f32 / self.scale);
         let Some(act) = self.hit_at(x, y) else { return };
+        if act == Act::Grab {
+            let p = cursor_screen();
+            let (sw, sh) = unsafe { (GetSystemMetrics(SM_CXSCREEN) as f32, GetSystemMetrics(SM_CYSCREEN) as f32) };
+            let grab = match self.settings.dock {
+                Dock::Top => self.settings.offset * sw - p.x as f32,
+                _ => self.settings.offset * sh - p.y as f32,
+            };
+            self.drag = Some((grab, false, p));
+            self.dirty = true;
+            return;
+        }
         if matches!(act, Act::ShelfItem(_)) {
             self.press = Some((x, y, act));
             return;
@@ -1026,6 +1179,13 @@ impl App {
 
     pub fn mouse_up(&mut self, px: i32, py: i32) {
         let (x, y) = (px as f32 / self.scale, py as f32 / self.scale);
+        if let Some((_, moved, _)) = self.drag.take() {
+            if moved {
+                self.settings.save();
+            }
+            self.dirty = true;
+            return;
+        }
         if let Some((_, _, Act::ShelfItem(i))) = self.press.take() {
             if self.hit_at(x, y) == Some(Act::ShelfItem(i)) {
                 if let Some(item) = self.shelf.items.get(i) {
@@ -1174,6 +1334,7 @@ impl App {
 
     fn act(&mut self, act: Act, x: f32) {
         match act {
+            Act::Grab => {}
             Act::PagePrev => self.go_page(-1),
             Act::PageNext => self.go_page(1),
             Act::Dot(i) => self.set_page(i),
@@ -1445,6 +1606,10 @@ impl App {
         self.hits.borrow_mut().clear();
         g.begin();
         g.alpha.set(1.0);
+        let fade = self.ghost < 0.999;
+        if fade {
+            g.push_fade(self.ghost);
+        }
         let (w, h, r) = (self.w.v, self.h.v, self.r.v);
         let (x0, y0) = self.shape_pos(w, h);
         self.top.set(y0);
@@ -1485,6 +1650,9 @@ impl App {
             }
             g.alpha.set(1.0);
             self.origin(0.0, 0.0);
+            g.pop_clip();
+        }
+        if fade {
             g.pop_clip();
         }
         g.end()
@@ -1669,6 +1837,7 @@ impl App {
         let base_a = g.alpha.get();
         // header (does not slide)
         self.origin(x0, self.top.get());
+        self.grab_strip(420.0);
         self.header();
         g.alpha.set(base_a * (1.0 - (slide.abs() / 36.0) * 0.7));
         self.origin(x0 + slide, self.top.get());
@@ -1692,6 +1861,14 @@ impl App {
             self.round_button(398.0, 69.0, 9.5, 0x3C3C3C, glyph::CHEV_R, 10.0, WHITE, Act::PageNext);
         }
         self.page_dots(210.0, 139.0);
+    }
+
+    /// Drag handle along the top of the panel (a small grip shows while it is hovered).
+    fn grab_strip(&self, w: f32) {
+        if self.hot(Act::Grab) || self.drag.is_some() {
+            self.g().fill_rrect(w / 2.0 - 14.0, 4.0, 28.0, 3.5, 1.75, WHITE, 0.35);
+        }
+        self.hit(0.0, 0.0, w, 30.0, Act::Grab);
     }
 
     fn header(&self) {
@@ -2180,6 +2357,54 @@ pub fn open_path(p: &std::path::Path) {
     unsafe {
         ShellExecuteW(None, windows::core::w!("open"), windows::core::PCWSTR(wide.as_ptr()), None, None, SW_SHOWNORMAL);
     }
+}
+
+/// Places the window for a dock: hanging from the top edge, or against the left/right edge,
+/// centred at `offset` (fraction of the screen) along that edge. Returns the DPI scale.
+pub fn place_window(hwnd: HWND, dock: Dock, offset: f32) -> f32 {
+    unsafe {
+        let scale = windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd).max(96) as f32 / 96.0;
+        let (ww, wh) = window_size(dock);
+        let (w, h) = ((ww * scale).round() as i32, (wh * scale).round() as i32);
+        let (sw, sh) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+        let (x, y) = match dock {
+            Dock::Top => ((offset * sw as f32) as i32 - w / 2, 0),
+            Dock::Left => (0, (offset * sh as f32) as i32 - h / 2),
+            Dock::Right => (sw - w, (offset * sh as f32) as i32 - h / 2),
+        };
+        let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
+        scale
+    }
+}
+
+/// Lets clicks go through the window (it stays visible) or makes it take them again.
+fn set_click_through(hwnd: HWND, on: bool) {
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let t = WS_EX_TRANSPARENT.0 as isize;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, if on { ex | t } else { ex & !t });
+    }
+}
+
+fn cursor_screen() -> POINT {
+    let mut p = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut p);
+    }
+    p
+}
+
+/// (a mouse button is held, a button is held or was pressed since the last check)
+fn mouse_buttons() -> (bool, bool) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
+    let mut held = false;
+    let mut pressed = false;
+    for k in [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON] {
+        let s = unsafe { GetAsyncKeyState(k.0 as i32) } as u16;
+        held |= s & 0x8000 != 0;
+        pressed |= s & 0x8001 != 0;
+    }
+    (held, pressed)
 }
 
 pub fn activate(hwnd: HWND, on: bool) {

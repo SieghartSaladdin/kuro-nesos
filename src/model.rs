@@ -1,6 +1,6 @@
 //! Persistent models: settings, water reminder, to-do list, autostart.
 //! Files live in %APPDATA%\KuroNesos.
-//!   settings.txt  pet=1 / minimal=0 / lyrics=1 / romaji=1 / dock=top|left|right
+//!   settings.txt  pet=1 / minimal=0 / lyrics=1 / romaji=1 / dock=top|left|right / offset=0.500
 //!   water.txt     bottle, goal, start, end, day, taken, inb, fired, vis, hours, on
 //!   todo.txt      day=YYYYMMDD then one task per line: "done|HH:MM|HH:MM|title"
 
@@ -70,6 +70,8 @@ pub struct Settings {
     /// Show lyrics in Latin letters (romaji, pinyin, ...) when they use another script.
     pub romaji: bool,
     pub dock: Dock,
+    /// Centre of the notch along its edge, as a fraction of the screen (0.5 = middle).
+    pub offset: f32,
 }
 
 /// Where the notch lives: hanging from the top edge, or against the left/right edge.
@@ -92,7 +94,7 @@ impl Dock {
 
 impl Settings {
     pub fn load() -> Self {
-        let mut s = Settings { pet: true, minimal: false, lyrics: true, romaji: true, dock: Dock::Top };
+        let mut s = Settings { pet: true, minimal: false, lyrics: true, romaji: true, dock: Dock::Top, offset: 0.5 };
         if let Ok(t) = fs::read_to_string(roaming().join("settings.txt")) {
             for (k, v) in kv(&t) {
                 let on = v.trim() == "1";
@@ -108,6 +110,7 @@ impl Settings {
                             _ => Dock::Top,
                         }
                     }
+                    "offset" => s.offset = v.trim().parse::<f32>().unwrap_or(0.5).clamp(0.0, 1.0),
                     _ => {}
                 }
             }
@@ -117,12 +120,13 @@ impl Settings {
 
     pub fn save(&self) {
         let t = format!(
-            "pet={}\nminimal={}\nlyrics={}\nromaji={}\ndock={}\n",
+            "pet={}\nminimal={}\nlyrics={}\nromaji={}\ndock={}\noffset={:.3}\n",
             self.pet as u8,
             self.minimal as u8,
             self.lyrics as u8,
             self.romaji as u8,
-            self.dock.name()
+            self.dock.name(),
+            self.offset
         );
         let _ = fs::write(roaming().join("settings.txt"), t);
     }

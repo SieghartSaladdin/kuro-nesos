@@ -488,6 +488,22 @@ impl Gfx {
         }
     }
 
+    /// Draws everything until `pop_clip` at `opacity` (used to fade the whole notch).
+    pub fn push_fade(&self, opacity: f32) {
+        unsafe {
+            let params = D2D1_LAYER_PARAMETERS1 {
+                contentBounds: D2D_RECT_F { left: -1e6, top: -1e6, right: 1e6, bottom: 1e6 },
+                geometricMask: ManuallyDrop::new(None),
+                maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                maskTransform: identity(),
+                opacity,
+                opacityBrush: ManuallyDrop::new(None),
+                layerOptions: D2D1_LAYER_OPTIONS1_NONE,
+            };
+            self.ctx.PushLayer(&params, None);
+        }
+    }
+
     pub fn pop_clip(&self) {
         unsafe { self.rt().PopLayer() };
     }

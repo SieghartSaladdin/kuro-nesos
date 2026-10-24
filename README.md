@@ -40,8 +40,11 @@
 ## Features
 
 - **Notch that lives on your screen.** A black pill hangs from the top edge and expands into a
-  panel when you hover it. Docked to the left/right edge it turns vertical: a slim tab that
-  opens into a tall panel, so it never covers your browser tabs. Smooth spring animations,
+  panel when you rest the cursor on it. Drag the panel's header to slide it along the edge or
+  over to the left/right edge, where it turns vertical: a slim tab that opens into a tall panel.
+- **Never in the way.** Clicks go straight through the closed notch to the window below, and
+  it fades out while the cursor passes over it, so tabs and buttons underneath stay usable.
+  It only opens when the cursor rests on it for a moment (or right away with `Ctrl`). Smooth spring animations,
   synced to your display's refresh rate (60/120/144 Hz).
 - **Music.** Works with any player that shows up in the Windows media flyout (Spotify,
   browsers, Apple Music, ...): title, artist, album art, progress with seeking, play/pause,
@@ -95,10 +98,11 @@ notch appears. Right-click the tray icon for options and *Start with Windows*.
 
 | Where | What |
 |---|---|
-| Hover the notch | expand it; move away to collapse |
+| Rest the cursor on the notch (or hold `Ctrl`) | expand it; move away to collapse |
+| Drag the panel header | move the notch along the edge or to the left/right/top edge |
 | `‹` `›`, the dots, or the mouse wheel | switch page (Music, Pomodoro, Water, Shelf, To-do) |
 | Lyrics bubble / `Aa` chip on the music page | lyrics on/off, romaji on/off |
-| Tray icon (right-click) | Start with Windows, Mascot, Minimal notch, Romaji lyrics, Position (Top / Left side / Right side), About, Exit |
+| Tray icon (right-click) | Start with Windows, Mascot, Minimal notch, Romaji lyrics, Reset position, About, Exit |
 | To-do form | type the title, `Tab` to the time field (`HHMM HHMM`), `Enter` saves, `Esc` cancels |
 
 ### Command-line flags (testing)
