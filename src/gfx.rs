@@ -435,10 +435,6 @@ impl Gfx {
         unsafe { self.rt().FillGeometry(g, self.set(hex, a), None) };
     }
 
-    pub fn fill_geometry_brush(&self, g: &ID2D1PathGeometry1, brush: &ID2D1Brush) {
-        unsafe { self.rt().FillGeometry(g, brush, None) };
-    }
-
     // ------------------------------------------------------------ gradients & glow
 
     fn stops(&self, stops: &[(f32, u32, f32)]) -> Option<ID2D1GradientStopCollection> {

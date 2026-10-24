@@ -62,8 +62,11 @@
   back out to any app.
 - **Alerts**: Caps Lock, charger plugged/unplugged, low battery, Wi-Fi/Ethernet changes,
   Bluetooth devices, keyboard layout, and mirrored Windows notifications.
-- **Mascot**: after 15 s without input the notch falls asleep as a little black cat, then
-  wakes up and waves when you come back.
+- **Kuro the cat**: after 15 s without input the notch turns into a little black neko that
+  naps (ears, whiskers, paws over the edge, a swishing tail and drifting "z"s), opens its
+  amber eyes and follows your cursor when you come back, then waves hello.
+- **Smooth everywhere**: spring-animated shape, cross-fading views, and every control eases
+  its hover highlight, squeezes a little when clicked, and animates switches and checks.
 - **Polite**: hides while a fullscreen app (game, video) is in front, rebuilds its renderer
   after a GPU reset, uses about 10-20 MB of RAM and ~2 % of one CPU core when idle.
 
@@ -135,7 +138,7 @@ Rust with the [`windows`](https://github.com/microsoft/windows-rs) crate, no UI 
 |---|---|
 | `src/main.rs` | window, frame loop paced by the compositor, tray, command line |
 | `src/gfx.rs` | Direct3D 11 → DXGI swap chain → DirectComposition, drawn with Direct2D + DirectWrite |
-| `src/ui.rs` | notch state machine, layout, animations, all pages, mascot |
+| `src/ui/` | notch state machine (`mod.rs`), animations (`anim.rs`), input, painting, pages, vertical layouts, music, alerts, mascot, window helpers |
 | `src/media.rs` | Global System Media Transport Controls (title, art, timeline, commands) |
 | `src/lyrics.rs`, `src/json.rs` | LRCLIB client, LRC parser, minimal JSON reader |
 | `src/roman.rs` | romanization (ICU transliterator, Japanese reading analyzer, Hangul RR) |
@@ -144,6 +147,9 @@ Rust with the [`windows`](https://github.com/microsoft/windows-rs) crate, no UI 
 
 The logo is drawn by code: `python assets/make_logo.py` (needs Pillow) regenerates
 `assets/logo.png` and the app icon `assets/kuro-nesos.ico`.
+
+Contributor notes (module map, conventions, frame pacing and memory budget) are in
+[AGENTS.md](AGENTS.md).
 
 ## Credits
 

@@ -38,7 +38,8 @@ impl App {
             Mode::Live => (46.0, 120.0, 16.0),
             Mode::Timer => (56.0, 124.0, 18.0),
             Mode::Minimal => (28.0, 72.0, 10.0),
-            Mode::Collapsed | Mode::Mascot => (40.0, 110.0, 14.0),
+            Mode::Mascot => (40.0, 100.0, 18.0),
+            Mode::Collapsed => (40.0, 110.0, 14.0),
         }
     }
 
@@ -73,47 +74,6 @@ impl App {
         let s = self.pomo.remaining.max(0.0) as u64;
         g.text(&format!("{:02}", s / 60), c, 84.0, 15.0, 700, Align::Center, color, 1.0, w);
         g.text(&format!("{:02}", s % 60), c, 104.0, 15.0, 700, Align::Center, color, 0.75, w);
-    }
-
-    pub(super) fn paint_mascot_v(&self, x0: f32, y0: f32, w: f32, h: f32) {
-        self.origin(0.0, 0.0);
-        let g = self.g();
-        let (_, open, happy) = self.mascot_phase();
-        let t = self.started.elapsed().as_secs_f32();
-        let c = x0 + w / 2.0;
-        let cy = y0 + h / 2.0 - 10.0;
-        let (_, my) = self.cursor_logical();
-        let look = if open > 0.0 || happy > 0.0 { ((my - cy) / 80.0).clamp(-1.0, 1.0) * 2.0 } else { 0.0 };
-        for ex in [c - 8.0, c + 8.0] {
-            let ey = cy + look;
-            if happy > 0.01 {
-                g.glow(ex, ey, 7.0, 6.5, 0xBFD8FF, 0.35 * happy);
-                let s = 3.4;
-                let pts: Vec<(f32, f32)> = (0..=8)
-                    .map(|i| {
-                        let a = std::f32::consts::PI * (1.0 + i as f32 / 8.0);
-                        (ex + a.cos() * s, ey + 1.2 + a.sin() * s * 0.85)
-                    })
-                    .collect();
-                g.polyline(&pts, WHITE, happy, 1.7);
-            } else {
-                let ry = 0.9 + 3.8 * open;
-                let pulse = if open < 0.01 { 0.75 + 0.25 * (t * 2.0).sin() } else { 1.0 };
-                g.glow(ex, ey, 6.5, 4.0 + ry, 0xBFD8FF, 0.45 * pulse);
-                g.fill_ellipse(ex, ey, 2.9 - 0.5 * open, ry, WHITE, pulse);
-            }
-        }
-        if happy > 0.01 {
-            // waving paw under the eyes
-            let (px, py) = (c, cy + 30.0);
-            g.set_transform(rotation((t * 9.0).sin() * 18.0, px, py + 4.0));
-            g.glow(px, py, 8.0, 8.0, 0xBFD8FF, 0.3 * happy);
-            g.fill_ellipse(px, py + 1.0, 3.2, 2.9, WHITE, happy);
-            for (dx, dy) in [(-2.7, -2.4), (0.0, -3.6), (2.7, -2.4)] {
-                g.fill_circle(px + dx, py + dy, 1.35, WHITE, happy);
-            }
-            self.origin(0.0, 0.0);
-        }
     }
 
     pub(super) fn paint_lyrics_v(&self, x0: f32, w: f32, h: f32) {
@@ -171,8 +131,11 @@ impl App {
         let first = cx - gap * (PAGES.len() as f32 - 1.0) / 2.0;
         for i in 0..PAGES.len() {
             let x = first + gap * i as f32;
-            let color = if self.hot(Act::Dot(i)) { 0xC8CDD5 } else { 0x5B6270 };
-            g.fill_circle(x, cy, 2.0, color, 1.0);
+            let k = self.hov(Act::Dot(i));
+            g.fill_circle(x, cy, 2.0, 0x5B6270, 1.0);
+            if k > 0.0 {
+                g.fill_circle(x, cy, 2.0 + 0.8 * k, 0xC8CDD5, k);
+            }
             self.hit(x - gap / 2.0, cy - 10.0, gap, 20.0, Act::Dot(i));
         }
         // the indicator stretches a little while it travels
@@ -299,8 +262,9 @@ impl App {
         if m.duration > 0.0 {
             let f = (pos / m.duration).clamp(0.0, 1.0) as f32;
             g.fill_rrect(PAD, 314.0, (CW * f).max(3.0), 3.0, 1.5, 0xD8D8D8, 1.0);
-            if self.hot(Act::MediaSeek) {
-                g.fill_circle(PAD + CW * f, 315.5, 4.5, WHITE, 1.0);
+            let k = self.hov(Act::MediaSeek);
+            if k > 0.0 {
+                g.fill_circle(PAD + CW * f, 315.5, 4.5 * k, WHITE, k);
             }
         }
         self.hit(PAD, 307.0, CW, 16.0, Act::MediaSeek);
@@ -317,8 +281,9 @@ impl App {
         }
         self.hit(17.0, cy - 12.0, 26.0, 24.0, Act::Lyrics);
         let ron = self.settings.romaji;
-        if ron || self.hot(Act::Romaji) {
-            g.fill_rrect(51.0, cy - 9.0, 26.0, 18.0, 9.0, 0x262626, 1.0);
+        let rk = self.fx.level(Act::Romaji, ron as u8 as f32).max(self.hov(Act::Romaji));
+        if rk > 0.0 {
+            g.fill_rrect(51.0, cy - 9.0, 26.0, 18.0, 9.0, 0x262626, rk);
         }
         g.text("Aa", 64.0, cy, 10.5, 700, Align::Center, if ron { WHITE } else { 0x7A7A7A }, 1.0, 26.0);
         if ron {
@@ -327,22 +292,20 @@ impl App {
         self.hit(49.0, cy - 12.0, 30.0, 24.0, Act::Romaji);
         let tri = |cx: f32, dir: f32, s: f32| vec![(cx - dir * s * 0.55, cy - s * 0.6), (cx - dir * s * 0.55, cy + s * 0.6), (cx + dir * s * 0.65, cy)];
         for (cx, dir, act) in [(118.0, -1.0, Act::MediaPrev), (202.0, 1.0, Act::MediaNext)] {
-            if self.hot(act) {
-                g.fill_circle(cx, cy, 14.0, WHITE, 0.08);
-            }
+            self.hover_ring(act, cx, cy, 14.0, 0.08);
             g.polygon(&tri(cx - dir * 5.0, dir, 9.0), fg, 0.8);
             g.polygon(&tri(cx + dir * 4.0, dir, 9.0), fg, 0.8);
             self.hit(cx - 14.0, cy - 13.0, 28.0, 26.0, act);
         }
         let pc = 160.0;
-        if self.hot(Act::MediaPlay) {
-            g.fill_circle(pc, cy, 15.0, WHITE, 0.08);
+        self.hover_ring(Act::MediaPlay, pc, cy, 15.0, 0.08);
+        let pl = self.fx.level(Act::MediaPlay, m.playing as u8 as f32);
+        if pl > 0.0 {
+            g.fill_rrect(pc - 7.0, cy - 8.5 + (1.0 - pl) * 3.0, 4.6, 17.0 - (1.0 - pl) * 6.0, 1.5, fg, pl);
+            g.fill_rrect(pc + 2.4, cy - 8.5 + (1.0 - pl) * 3.0, 4.6, 17.0 - (1.0 - pl) * 6.0, 1.5, fg, pl);
         }
-        if m.playing {
-            g.fill_rrect(pc - 7.0, cy - 8.5, 4.6, 17.0, 1.5, fg, 1.0);
-            g.fill_rrect(pc + 2.4, cy - 8.5, 4.6, 17.0, 1.5, fg, 1.0);
-        } else {
-            g.polygon(&[(pc - 6.0, cy - 9.5), (pc - 6.0, cy + 9.5), (pc + 9.5, cy)], fg, 1.0);
+        if pl < 1.0 {
+            g.polygon(&[(pc - 6.0, cy - 9.5), (pc - 6.0, cy + 9.5), (pc + 9.5, cy)], fg, 1.0 - pl);
         }
         self.hit(pc - 15.0, cy - 14.0, 30.0, 28.0, Act::MediaPlay);
     }
@@ -386,10 +349,12 @@ impl App {
         let lw = g.measure(&litres, 30.0, 700);
         g.text(&format!("/ {:.1} L", w.goal as f32 / 1000.0), PAD + lw + 6.0, 88.0, 13.5, 400, Align::Left, GREY, 1.0, 80.0);
         let on = w.on;
-        self.button(PW - PAD - 34.0, 75.0, 34.0, 18.0, 9.0, if on { 0x2699FF } else { 0x3A3A3A }, 1.0, Act::WaterOn);
-        let kx = if on { PW - PAD - 9.0 } else { PW - PAD - 25.0 };
+        let k = self.fx.level(Act::WaterOn, on as u8 as f32);
+        self.button(PW - PAD - 34.0, 75.0, 34.0, 18.0, 9.0, 0x3A3A3A, 1.0, Act::WaterOn);
+        g.fill_rrect(PW - PAD - 34.0, 75.0, 34.0, 18.0, 9.0, 0x2699FF, k);
+        let kx = PW - PAD - 25.0 + 16.0 * k;
         g.fill_circle(kx, 84.0, 7.2, WHITE, 1.0);
-        g.icon(glyph::BELL, kx, 84.0, 8.5, if on { 0x2699FF } else { GREY }, 1.0);
+        g.icon(glyph::BELL, kx, 84.0, 8.5, if k > 0.5 { 0x2699FF } else { GREY }, 1.0);
 
         let pct = format!("{}%", w.percent());
         let tail = if !w.on {
@@ -545,8 +510,9 @@ impl App {
             let y = 68.0 + (i / 3) as f32 * (th + 8.0);
             let act = Act::ShelfItem(i);
             g.fill_rrect(x, y, tw, th, 10.0, 0x161616, 1.0);
-            if self.hot(act) {
-                g.fill_rrect(x, y, tw, th, 10.0, WHITE, 0.07);
+            let k = self.hov(act);
+            if k > 0.0 {
+                g.fill_rrect(x, y, tw, th, 10.0, WHITE, 0.07 * k);
             }
             let (gl, c) = match it.kind {
                 Kind::Folder => (glyph::FOLDER, 0xFFC94A),
@@ -604,16 +570,12 @@ impl App {
             let t = &self.tasks[i];
             let y = cy0 + 8.0 + row as f32 * 31.0;
             let (rx, rw) = (cx0 + 6.0, cw - 12.0);
-            if self.task_sel == Some(i) || self.hot(Act::TodoRow(i)) {
-                g.fill_rrect(rx, y, rw, 28.0, 8.0, 0x1F1F1F, 1.0);
+            let k = self.fx.level(Act::TodoRow(i), (self.task_sel == Some(i)) as u8 as f32).max(self.hov(Act::TodoRow(i)));
+            if k > 0.0 {
+                g.fill_rrect(rx, y, rw, 28.0, 8.0, 0x1F1F1F, k);
             }
             self.hit(rx + 22.0, y, rw - 22.0, 28.0, Act::TodoRow(i));
-            if t.done {
-                g.fill_circle(rx + 12.0, y + 14.0, 6.5, GREEN, 1.0);
-                g.icon(glyph::CHECK, rx + 12.0, y + 14.0, 7.5, 0x0B2A12, 1.0);
-            } else {
-                g.stroke_circle(rx + 12.0, y + 14.0, 6.0, 0x6A6A6A, 1.0, 1.4);
-            }
+            self.check_mark(i, t.done, rx + 12.0, y + 14.0);
             self.hit(rx, y, 22.0, 28.0, Act::TodoCheck(i));
             let title_w = rw - 30.0;
             g.text(&t.title, rx + 25.0, y + 10.0, 12.0, 400, Align::Left, if t.done { DIM } else { WHITE }, 1.0, title_w);
