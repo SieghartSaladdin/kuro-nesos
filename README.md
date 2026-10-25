@@ -19,7 +19,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/lyrics-pill.png" width="330" alt="Live lyrics in the collapsed notch">
+  <img src="docs/screenshots/lyrics-pill.png" width="380" alt="Live lyrics and the beat equalizer in the collapsed notch">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/home.png" width="420" alt="Home page with music, focus, water, to-do and shelf tiles">
+  <img src="docs/screenshots/settings.png" width="420" alt="Settings page">
 </p>
 
 <p align="center">
@@ -28,13 +33,17 @@
 </p>
 
 <p align="center">
+  <img src="docs/screenshots/shelf.png" width="420" alt="Shelf page with a screenshot thumbnail">
   <img src="docs/screenshots/todo.png" width="420" alt="To-do page">
-  <img src="docs/screenshots/alert-drink.png" width="400" alt="Actionable water reminder">
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/alert-message.png" width="400" alt="Mirrored Windows notification">
-  <img src="docs/screenshots/alert-caps.png" width="340" alt="Caps Lock alert">
+  <img src="docs/screenshots/alert-drink.png" width="420" alt="Actionable water reminder">
+  <img src="docs/screenshots/alert-message.png" width="420" alt="Mirrored Windows notification">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/alert-caps.png" width="360" alt="Caps Lock alert">
 </p>
 
 ## Features
