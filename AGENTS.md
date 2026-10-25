@@ -26,7 +26,7 @@ Test flags (see `main.rs`): `--demo alerts|lyrics|mascot|all`, `--pin` (keep the
 
 Files on disk: settings / water / to-do in `%APPDATA%\KuroNesos`, shelf items and `log.txt`
 in `%LOCALAPPDATA%\KuroNesos`. `settings.txt` is `key=value` lines:
-`pet`, `minimal`, `lyrics`, `romaji` (0/1), `dock=top|left|right`, `offset=0.500`.
+`pet`, `minimal`, `lyrics`, `romaji`, `screenshots` (0/1), `dock=top|left|right`, `offset=0.500`.
 
 ## Module map
 
@@ -38,20 +38,22 @@ in `%LOCALAPPDATA%\KuroNesos`. `settings.txt` is `key=value` lines:
 | `src/ui/anim.rs` | `Spring`, `ease`, and `Fx` (per-control hover / press / on-off animations) |
 | `src/ui/input.rs` | hover dwell, click-through state, dragging the notch between edges, mouse/keyboard actions (`act`) |
 | `src/ui/paint.rs` | `render()`, renderer recovery, hit areas, shared controls (`button`, `round_button`, `hover_ring`), compact views |
-| `src/ui/pages.rs` | top-dock panel: header, Pomodoro, Water, Shelf, To-do pages |
+| `src/ui/home.rs` | Kuro amber chrome: header (icon + title, amber-colon clock), Home bento tiles, Settings page, `play_button`, `switch`; both docks |
+| `src/ui/pages.rs` | top-dock panel: paging and the Pomodoro, Water, Shelf, To-do pages, plus the building blocks both docks share (`play_disc`, `mode_chips`, `big_timer`, `water_bottle`, `water_chart`, `shelf_card`, `drop_card`, `todo_row`, `todo_form`, `plus_button`) |
 | `src/ui/vertical.rs` | everything for the left/right docks (vertical shapes, compact views, 240×440 panel pages) |
 | `src/ui/music.rs` | media state → lyrics, the music page |
 | `src/ui/alerts.rs` | alert queue, system alerts, demo script, alert views |
 | `src/ui/mascot.rs` | the black neko: sleep/wake state and drawing (works for every dock via rotation) |
 | `src/ui/window.rs` | Win32 helpers: `place_window`, click-through, cursor, focus, `open_path` |
 | `src/media.rs` | Global System Media Transport Controls (title, art, timeline, commands) |
+| `src/audio.rs` | equalizer levels: a thread captures the default output (WASAPI loopback) only while music plays, splits it into six bands with one-pole filters and hands RMS peaks to the UI through atomics; `Beat` turns them into bar heights relative to each band's half-second average, plus a bass beat pulse |
 | `src/lyrics.rs`, `src/json.rs` | LRCLIB client, LRC parser, tiny JSON reader |
 | `src/roman.rs` | offline romanization (ICU `icu.dll` transliterators, Windows Japanese reading analyzer, Hangul RR) |
 | `src/jdict.rs` | kanji reader for PCs without Japanese data: Viterbi over the memory-mapped IPADIC dictionary `ja-reading.knd`, downloaded once from the `ja-dict-1` release |
 | `tools/make_ja_dict.py` | builds `ja-reading.knd` from the IPADIC sources (format documented in the script) |
 | `src/sys.rs` | battery, network, Bluetooth, notifications, keyboard layout, fullscreen detection, chime, memory trim |
 | `src/model.rs` | settings, water reminder, to-do list, autostart |
-| `src/shelf.rs` | shelf storage and OLE drag & drop in/out |
+| `src/shelf.rs` | shelf storage and OLE drag & drop in/out; screenshots are added by reference (`add_path`) from `ShotWatch` in `sys.rs`, which polls the Screenshots known folder |
 
 Child modules of `ui` are `impl App` blocks. Methods another `ui` module calls are
 `pub(super)`; keep private what only one module uses. Add a new page or view as a new
@@ -69,11 +71,20 @@ module instead of growing `mod.rs`.
   - `self.squeeze(act)` – scale for the click "pop",
   - `self.fx.level(act, target)` – smooth on/off (switches, check marks, play/pause).
   No control should jump between two looks without an animation.
+  Small reactive touches live next to the control they belong to: the album art bumps on a
+  track change (`cover_bump`), the Pomodoro seconds slide and its play button ripples while
+  running, the water bottle level glides and waves and a drop falls in on "Drink"
+  (`drink_at`), the to-do "+" turns into an "x" and done tasks strike through, shelf cards
+  lift on hover, and the header icon pops while a page slides in.
 - Anything that animates must make `tick()` see `moving = true` (springs, `Fx::step`,
   `content_a`, ghost fade), otherwise frames stop and the animation freezes halfway.
 - The vertical docks have their own layouts in `vertical.rs`; when you change a page in
   `pages.rs`/`music.rs`, change its vertical twin too.
 - UI text is English; user-facing strings are short.
+- Design language ("Kuro amber"): black `#050505` surfaces, cards `CARD` with a 1px `HAIR`
+  outline, grey secondary text, and one accent, `AMBER`, only for what is active (progress,
+  play button, switches, Pomodoro focus, page indicator). Text on amber uses
+  `ON_AMBER`. Water keeps its blue and alerts keep their semantic colours.
 
 ## Window behaviour (do not break)
 
@@ -124,7 +135,7 @@ the README's Privacy section.
 
 There is no unit-test suite for the UI; verify in the real app:
 
-- `--pin --page N` to screenshot each page; `--demo all` for fake alerts, a fake song with
+- `--pin --page N` (0 Home ... 6 Settings) to screenshot each page; `--demo all` for fake alerts, a fake song with
   lyrics and a fast-sleeping mascot.
 - Change `dock=` in `settings.txt` to check the left/right layouts, and restore the file.
 - When automating input, move the real cursor only and post mouse messages to the notch
@@ -132,5 +143,11 @@ There is no unit-test suite for the UI; verify in the real app:
 
 ## Releasing
 
-Bump the version in `Cargo.toml` and `kuro-nesos.rc`, build, attach
-`target/release/kuro-nesos.exe` to a GitHub release with a short changelog.
+Bump the version in `Cargo.toml` and `kuro-nesos.rc`, then run `installer/build.ps1` (needs
+Inno Setup 6). It builds the release exe and writes to `dist/`: the installer
+`KuroNesos-<version>-Setup.exe` (script `installer/kuro-nesos.iss`, per-user install), the
+portable zip (exe + `installer/portable.txt`) and the plain exe. Attach all three to the
+GitHub release with a short changelog.
+
+Portable mode (`model::portable_dir`): a `portable.txt` next to the exe moves all data into
+`KuroNesosData` beside it. Anything that stores files must go through `model::data_dir`.

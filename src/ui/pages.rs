@@ -1,4 +1,7 @@
-//! Expanded panel (top dock): header, paging and the Pomodoro, Water, Shelf and To-do pages.
+//! Expanded panel (top dock): paging and the Pomodoro, Water, Shelf and To-do pages, plus
+//! their building blocks (timer, bottle, chart, shelf cards, task rows, task form) that the
+//! side-dock layouts in vertical.rs reuse. Home, Settings and the header are in home.rs,
+//! the music page in music.rs.
 
 use super::*;
 
@@ -11,44 +14,33 @@ impl App {
         // header (does not slide)
         self.origin(x0, self.top.get());
         self.grab_strip(420.0);
-        self.header();
+        self.header(420.0, 17.0, 16.0);
         g.alpha.set(base_a * (1.0 - (slide.abs() / 36.0) * 0.7));
         self.origin(x0 + slide, self.top.get());
         match page {
+            Page::Home => self.page_home(),
+            Page::Settings => self.page_settings(),
             Page::Media => self.page_media(),
             Page::Pomodoro => self.page_pomodoro(),
-            Page::Water => {
-                if self.water_settings {
-                    self.page_water_settings()
-                } else {
-                    self.page_water()
-                }
-            }
+            Page::Water if self.water_settings => self.page_water_settings(),
+            Page::Water => self.page_water(),
             Page::Shelf => self.page_shelf(),
             Page::Todo => self.page_todo(),
         }
         g.alpha.set(base_a);
         self.origin(x0, self.top.get());
-        if !(page == Page::Water && self.water_settings) {
-            self.round_button(22.0, 69.0, 9.5, 0x3C3C3C, glyph::CHEV_L, 10.0, WHITE, Act::PagePrev);
-            self.round_button(398.0, 69.0, 9.5, 0x3C3C3C, glyph::CHEV_R, 10.0, WHITE, Act::PageNext);
-        }
-        self.page_dots(210.0, 139.0);
+        self.page_nav(210.0, 139.0, !(page == Page::Water && self.water_settings));
     }
 
-    /// To-do check circle: fills and ticks with a little overshoot when a task is done.
-    pub(super) fn check_mark(&self, i: usize, done: bool, cx: f32, cy: f32) {
-        let g = self.g();
-        let d = self.fx.level(Act::TodoCheck(i), done as u8 as f32);
-        if d < 1.0 {
-            g.stroke_circle(cx, cy, 6.0, 0x6A6A6A, 1.0 - d, 1.4);
+    /// Page dots with the arrows right beside them (they nudge outwards on hover).
+    pub(super) fn page_nav(&self, cx: f32, cy: f32, arrows: bool) {
+        self.page_dots(cx, cy);
+        if arrows {
+            let half = 13.0 * (PAGES.len() as f32 - 1.0) / 2.0 + 20.0;
+            for (dir, act, gl) in [(-1.0, Act::PagePrev, glyph::CHEV_L), (1.0, Act::PageNext, glyph::CHEV_R)] {
+                self.round_button(cx + dir * (half + 2.0 * self.hov(act)), cy, 9.0, 0x262626, gl, 8.5, WHITE, act);
+            }
         }
-        if d > 0.0 {
-            let pop = 1.0 + 0.2 * (d * std::f32::consts::PI).sin();
-            g.fill_circle(cx, cy, 6.5 * d * pop, GREEN, 1.0);
-            g.icon(glyph::CHECK, cx, cy, 7.5 * d, 0x0B2A12, d);
-        }
-        self.hover_ring(Act::TodoCheck(i), cx, cy, 10.0, 0.08);
     }
 
     /// Drag handle along the top of the panel (a small grip shows while it is hovered).
@@ -61,169 +53,251 @@ impl App {
         self.hit(0.0, 0.0, w, 30.0, Act::Grab);
     }
 
-    pub(super) fn header(&self) {
+    /// Grey note next to the page title in the header ("2 of 4 done", "3 items").
+    /// Returns where it ends.
+    pub(super) fn header_note(&self, title: &str, note: &str, left: f32, cy: f32) -> f32 {
         let g = self.g();
-        let (date, time) = date_strings();
-        let dw = g.measure(&date, 13.0, 400);
-        let tw = g.measure(&time, 13.5, 700);
-        let total = dw + 8.0 + tw;
-        let left = 210.0 - total / 2.0;
-        g.text(&date, left, 18.0, 13.0, 400, Align::Left, 0xD0D0D0, 1.0, dw + 4.0);
-        g.text(&time, left + dw + 8.0, 18.0, 13.5, 700, Align::Left, WHITE, 1.0, tw + 4.0);
-        let page = PAGES[self.page];
-        let title: &[(&str, u32)] = match page {
-            Page::Media => &[],
-            Page::Pomodoro => &[("Pomodoro", WHITE)],
-            Page::Water if self.water_settings => &[],
-            Page::Water => &[("Water ", WHITE), ("Reminder", BLUE)],
-            Page::Shelf => &[("Shelf", WHITE)],
-            Page::Todo => &[("Todo", WHITE), ("List", GREEN)],
-        };
-        let mut x = 15.0;
-        for (s, c) in title {
-            g.text(s, x, 20.0, 14.5, 600, Align::Left, *c, 1.0, 120.0);
-            x += g.measure(s, 14.5, 600);
+        let x = left + 18.0 + g.measure(title, 13.5, 600) + 8.0;
+        g.text(note, x, cy, 11.0, 400, Align::Left, GREY, 1.0, 120.0);
+        x + g.measure(note, 11.0, 400)
+    }
+
+    // ------------------------------------------------------------ shared controls
+
+    /// Round play/pause disc; the pause bars and play triangle cross-fade.
+    pub(super) fn play_disc(&self, cx: f32, cy: f32, r: f32, color: u32, fg: u32, playing: bool, act: Act) {
+        let g = self.g();
+        let s = self.squeeze(act) * (1.0 + 0.06 * self.hov(act));
+        g.fill_circle(cx, cy, r * s, color, 1.0);
+        let pl = self.fx.level(act, playing as u8 as f32);
+        let k = r / 15.0 * s;
+        if pl > 0.0 {
+            for dx in [-4.8, 2.0] {
+                g.fill_rrect(cx + dx * k, cy - (7.5 - (1.0 - pl) * 2.5) * k, 3.0 * k, (15.0 - (1.0 - pl) * 5.0) * k, 1.2, fg, pl);
+            }
         }
-        if self.pomo.running && page != Page::Pomodoro {
-            let frac = (self.pomo.remaining / self.pomo.mode.secs()) as f32;
-            g.fill_circle(395.0, 18.0, 8.0, 0x3A1414, 1.0);
-            g.pie(395.0, 18.0, 8.0, -90.0, 360.0 * frac, RED, 0.9);
+        if pl < 1.0 {
+            g.polygon(&[(cx - 4.0 * k, cy - 7.0 * k), (cx - 4.0 * k, cy + 7.0 * k), (cx + 7.0 * k, cy)], fg, 1.0 - pl);
+        }
+        self.hit(cx - r - 3.0, cy - r - 3.0, 2.0 * r + 6.0, 2.0 * r + 6.0, act);
+    }
+
+    /// Amber "+" that turns into an "x" while the task form is open.
+    pub(super) fn plus_button(&self, cx: f32, cy: f32) {
+        let g = self.g();
+        let act = Act::TodoAdd;
+        let turn = self.fx.level(act, self.form.is_some() as u8 as f32);
+        let s = self.squeeze(act) * (1.0 + 0.08 * self.hov(act));
+        g.fill_circle(cx, cy, 10.0 * s, AMBER, 1.0);
+        for base in [0.0f32, 90.0] {
+            let a = (base + 45.0 * turn).to_radians();
+            let (dx, dy) = (a.cos() * 4.5 * s, a.sin() * 4.5 * s);
+            g.line(cx - dx, cy - dy, cx + dx, cy + dy, ON_AMBER, 1.0, 1.8);
+        }
+        self.hit(cx - 12.0, cy - 12.0, 24.0, 24.0, act);
+    }
+
+    /// To-do check circle: fills and ticks with a little overshoot when a task is done.
+    pub(super) fn check_mark(&self, i: usize, done: bool, cx: f32, cy: f32) {
+        let g = self.g();
+        let d = self.fx.level(Act::TodoCheck(i), done as u8 as f32);
+        if d < 1.0 {
+            g.stroke_circle(cx, cy, 6.0, 0x6A6A6A, 1.0 - d, 1.4);
+        }
+        if d > 0.0 {
+            let pop = 1.0 + 0.2 * (d * std::f32::consts::PI).sin();
+            g.fill_circle(cx, cy, 6.5 * d * pop, AMBER, 1.0);
+            g.icon(glyph::CHECK, cx, cy, 7.5 * d, ON_AMBER, d);
+        }
+        self.hover_ring(Act::TodoCheck(i), cx, cy, 10.0, 0.08);
+    }
+
+    // ------------------------------------------------------------ Pomodoro
+
+    /// Focus / Short / Long chips; the active one gets an outline in the mode colour.
+    /// `x` is the left edge, or the centre when `center` is set.
+    pub(super) fn mode_chips(&self, x: f32, cy: f32, center: bool) {
+        let g = self.g();
+        let chips = [("Focus", PMode::Focus, Act::PomoFocus), ("Short", PMode::Short, Act::PomoShort), ("Long", PMode::Long, Act::PomoLong)];
+        let widths: Vec<f32> = chips.iter().map(|c| g.measure(c.0, 11.0, 400) + 20.0).collect();
+        let total = widths.iter().sum::<f32>() + 6.0 * (chips.len() as f32 - 1.0);
+        let mut x = if center { x - total / 2.0 } else { x };
+        for ((label, mode, act), w) in chips.into_iter().zip(widths) {
+            let on = self.fx.level(act, (self.pomo.mode == mode) as u8 as f32);
+            let color = if mode == PMode::Focus { AMBER } else { GREEN };
+            self.button(x, cy - 10.0, w, 20.0, 10.0, 0x161616, 1.0, act);
+            if on > 0.0 {
+                g.stroke_rrect(x, cy - 10.0, w, 20.0, 10.0, color, on, 1.2, false);
+            }
+            g.text(label, x + w / 2.0, cy, 11.0, 400, Align::Center, mix(0x8A8A8A, color, on), 1.0, w);
+            x += w + 6.0;
         }
     }
 
-    pub(super) fn page_pomodoro(&self) {
+    /// mm:ss in big digits; the seconds slide up a little each time they change.
+    pub(super) fn big_timer(&self, x: f32, cy: f32, size: f32, center: bool) {
         let g = self.g();
         let p = &self.pomo;
-        let frac = (p.remaining / p.mode.secs()).clamp(0.0, 1.0) as f32;
-        let color = if p.mode == PMode::Focus { RED } else { GREEN };
-        g.glow(80.0, 72.0, 46.0, 46.0, color, 0.28);
-        g.stroke_circle(80.0, 72.0, 30.0, color, 0.22, 6.5);
-        g.arc(80.0, 72.0, 30.0, -90.0, 360.0 * frac, color, 1.0, 6.5);
-        g.icon(glyph::STOPWATCH, 80.0, 72.0, 30.0, WHITE, 1.0);
+        let r = p.remaining.max(0.0);
+        let shown = r.ceil();
+        let (mm, ss) = (format!("{:02}:", shown as u64 / 60), format!("{:02}", shown as u64 % 60));
+        let (mw, sw) = (g.measure(&mm, size, 700), g.measure(&ss, size, 700));
+        let left = if center { x - (mw + sw) / 2.0 } else { x };
+        g.text(&mm, left, cy, size, 700, Align::Left, WHITE, 1.0, mw + 8.0);
+        let k = if p.running { ease((shown - r) as f32 / 0.25) } else { 1.0 };
+        let a = g.alpha.get();
+        g.alpha.set(a * (0.35 + 0.65 * k));
+        g.text(&ss, left + mw, cy + (1.0 - k) * size * 0.22, size, 700, Align::Left, WHITE, 1.0, sw + 8.0);
+        g.alpha.set(a);
+    }
 
-        g.text(&mmss(p.remaining.ceil()), 265.0, 50.0, 31.0, 700, Align::Center, WHITE, 1.0, 150.0);
-        self.round_button(331.0, 50.0, 12.5, 0x262626, glyph::REFRESH, 12.0, WHITE, Act::PomoReset);
-        g.text(p.mode.label(), 265.0, 77.0, 12.0, 400, Align::Center, GREY, 1.0, 150.0);
-
-        let short_active = p.mode != PMode::Focus;
-        self.button(145.0, 92.0, 85.0, 27.0, 13.5, if short_active { 0x333333 } else { 0x171717 }, 1.0, Act::PomoShort);
-        g.icon(glyph::CAFE, 159.0, 105.5, 11.0, WHITE, 1.0);
-        g.text("Short Break", 168.0, 105.5, 10.0, 400, Align::Left, WHITE, 1.0, 60.0);
-        self.button(239.0, 92.0, 53.0, 27.0, 13.5, color, 1.0, Act::PomoToggle);
-        if p.running {
-            g.fill_rrect(259.5, 99.5, 3.2, 12.0, 1.2, WHITE, 1.0);
-            g.fill_rrect(266.3, 99.5, 3.2, 12.0, 1.2, WHITE, 1.0);
-        } else {
-            g.polygon(&[(261.0, 99.5), (261.0, 111.5), (271.5, 105.5)], WHITE, 1.0);
+    /// Straight progress bar of the current Pomodoro phase.
+    pub(super) fn pomo_bar(&self, x: f32, y: f32, w: f32) {
+        let g = self.g();
+        let p = &self.pomo;
+        let f = (1.0 - p.remaining / p.mode.secs()).clamp(0.0, 1.0) as f32;
+        g.fill_rrect(x, y, w, 4.0, 2.0, 0x222222, 1.0);
+        if f > 0.0 {
+            g.fill_rrect(x, y, (w * f).max(4.0), 4.0, 2.0, self.pomo_color(), 1.0);
         }
-        self.button(301.0, 92.0, 85.0, 27.0, 13.5, if short_active { 0x171717 } else { 0x333333 }, 1.0, Act::PomoFocus);
-        g.icon(glyph::TARGET, 315.0, 105.5, 11.0, WHITE, 1.0);
-        g.text("Focus Time", 324.0, 105.5, 10.0, 400, Align::Left, WHITE, 1.0, 60.0);
+    }
+
+    /// Big start/pause disc; a soft ring keeps rippling out of it while the timer runs.
+    pub(super) fn pomo_play(&self, cx: f32, cy: f32, r: f32) {
+        let color = self.pomo_color();
+        if self.pomo.running {
+            let t = (self.started.elapsed().as_secs_f32() / 1.6).fract();
+            self.g().stroke_circle(cx, cy, r + 3.0 + 10.0 * t, color, 0.45 * (1.0 - t), 2.0);
+        }
+        let fg = if color == AMBER { ON_AMBER } else { 0x0B2A12 };
+        self.play_disc(cx, cy, r, color, fg, self.pomo.running, Act::PomoToggle);
+    }
+
+    pub(super) fn pomo_label(&self) -> String {
+        format!("{} · session {} of 4", self.pomo.mode.label(), self.pomo.sessions % 4 + 1)
+    }
+
+    pub(super) fn page_pomodoro(&self) {
+        self.mode_chips(16.0, 40.0, false);
+        self.big_timer(16.0, 79.0, 44.0, false);
+        self.pomo_bar(16.0, 108.0, 270.0);
+        self.g().text(&self.pomo_label(), 16.0, 122.0, 10.5, 400, Align::Left, GREY, 1.0, 126.0);
+        self.round_button(332.0, 74.0, 15.0, 0x222222, glyph::REFRESH, 13.0, WHITE, Act::PomoReset);
+        self.pomo_play(381.0, 74.0, 22.0);
+    }
+
+    // ------------------------------------------------------------ Water
+
+    /// "60% · Next 10:00", "Reminders off", ...
+    pub(super) fn water_status(&self) -> String {
+        let w = &self.water;
+        let tail = if !w.on {
+            "Reminders off".to_string()
+        } else if w.taken >= w.goal {
+            "Goal reached".to_string()
+        } else if let Some(n) = w.next_time() {
+            format!("Next {}", model::hhmm(n))
+        } else {
+            "Done for today".to_string()
+        };
+        format!("{}% · {}", w.percent(), tail)
+    }
+
+    /// A bottle that fills to today's progress: the level glides, the surface waves, and
+    /// after "Drink" a drop falls in and ripples.
+    pub(super) fn water_bottle(&self, x: f32, y: f32, w: f32, h: f32) {
+        let g = self.g();
+        let wt = &self.water;
+        let f = self.fx.level(Act::WaterDrink, (wt.taken as f32 / wt.goal.max(1) as f32).min(1.0));
+        let neck = w * 0.42;
+        g.fill_rrect(x + (w - neck) / 2.0, y, neck, 7.0, 3.0, 0x2A3A4A, 1.0);
+        let (by, bh) = (y + 9.0, h - 9.0);
+        g.fill_rrect(x, by, w, bh, 12.0, 0x0B131B, 1.0);
+        let (lx, lw) = (x + 3.0, w - 6.0);
+        let bottom = by + bh - 3.0;
+        let level = bottom - (bh - 6.0) * f;
+        if f > 0.002 {
+            // the liquid is clipped to the inside of the bottle, so its rounded bottom and the
+            // waving surface never poke through the glass
+            let t = self.started.elapsed().as_secs_f32();
+            g.push_clip_rrect(lx, by + 3.0, lw, bh - 6.0, 9.5);
+            g.fill_rrect(lx, level + 2.0, lw, bottom - level, 0.0, 0x2E7FD0, 1.0);
+            let mut wave = vec![(lx, level + 4.0)];
+            for i in 0..=12 {
+                let u = i as f32 / 12.0;
+                wave.push((lx + lw * u, level + (t * 3.2 + u * 6.3).sin() * 1.6));
+            }
+            wave.push((lx + lw, level + 4.0));
+            g.polygon(&wave, 0x2E7FD0, 1.0);
+            g.fill_rrect(lx + 4.0, level + 6.0, 3.0, (bottom - level - 12.0).max(0.0), 1.5, WHITE, 0.12);
+            g.pop_clip();
+        }
+        g.stroke_rrect(x, by, w, bh, 12.0, 0x2A3A4A, 1.0, 2.0, false);
+        g.text(&format!("{}%", wt.percent()), x + w / 2.0, by + bh * 0.55, 11.0, 700, Align::Center, WHITE, 0.9, w);
+        if let Some(t0) = self.drink_at {
+            let e = t0.elapsed().as_secs_f32();
+            if e < 0.45 {
+                let k = (e / 0.45).powi(2);
+                g.icon(glyph::DROP, x + w / 2.0, (y - 8.0) + (level - y + 8.0) * k, 10.0, CYAN, 1.0);
+            } else if e < 0.95 {
+                let k = (e - 0.45) / 0.5;
+                g.stroke_circle(x + w / 2.0, level, 3.0 + 9.0 * k, WHITE, 0.5 * (1.0 - k), 1.2);
+            }
+        }
+    }
+
+    /// Hourly water bars over the active hours, labelled every three hours.
+    pub(super) fn water_chart(&self, left: f32, right: f32, top: f32, bottom: f32) {
+        let g = self.g();
+        let w = &self.water;
+        let first = (w.start / 60) as usize;
+        let last = ((w.end + 59) / 60).min(24) as usize;
+        let n = (last.saturating_sub(first)).max(1);
+        let maxv = w.hours[first..last.max(first)].iter().copied().max().unwrap_or(0).max(w.bottle).max(1) as f32;
+        let slot = (right - left) / n as f32;
+        let bw = (slot * 0.62).min(10.0);
+        let now = model::now().hour;
+        for i in 0..n {
+            let hour = first + i;
+            let x = left + slot * i as f32 + (slot - bw) / 2.0;
+            g.fill_rrect(x, top, bw, bottom - top, bw / 2.0, 0x141414, 1.0);
+            let v = w.hours.get(hour).copied().unwrap_or(0) as f32 / maxv;
+            if v > 0.0 {
+                let hh = ((bottom - top) * v).max(bw);
+                g.fill_rrect(x, bottom - hh, bw, hh, bw / 2.0, BLUE, 1.0);
+            }
+            if hour == now {
+                g.fill_circle(x + bw / 2.0, top - 5.0, 1.8, WHITE, 0.8);
+            }
+            if hour % 3 == 0 {
+                g.text(&format!("{:02}", hour), x + bw / 2.0, bottom + 10.0, 10.0, 400, Align::Center, GREY, 1.0, 30.0);
+            }
+        }
+    }
+
+    /// Drink button, settings and the reminder switch in a row starting at `x`.
+    pub(super) fn water_actions(&self, x: f32, cy: f32) {
+        let g = self.g();
+        self.button(x, cy - 12.0, 66.0, 24.0, 12.0, 0x123A63, 1.0, Act::WaterDrink);
+        g.icon(glyph::DROP, x + 15.0, cy, 11.0, CYAN, 1.0);
+        g.text("Drink", x + 25.0, cy, 11.5, 400, Align::Left, WHITE, 1.0, 40.0);
+        self.round_button(x + 84.0, cy, 12.0, 0x1F1F1F, glyph::SLIDERS, 10.0, WHITE, Act::WaterSettings);
+        self.switch(x + 104.0, cy, self.water.on, Act::WaterOn);
+        self.hit(x + 102.0, cy - 10.0, 34.0, 20.0, Act::WaterOn);
     }
 
     pub(super) fn page_water(&self) {
         let g = self.g();
         let w = &self.water;
+        self.water_bottle(22.0, 33.0, 44.0, 93.0);
         let litres = format!("{:.1}", w.taken as f32 / 1000.0);
-        g.text(&litres, 44.0, 49.0, 30.0, 700, Align::Left, WHITE, 1.0, 120.0);
-        let lw = g.measure(&litres, 30.0, 700);
-        g.text(&format!("/ {:.1} L", w.goal as f32 / 1000.0), 44.0 + lw + 6.0, 53.0, 14.0, 400, Align::Left, GREY, 1.0, 80.0);
-
-        // reminder toggle
-        let on = w.on;
-        let k = self.fx.level(Act::WaterOn, on as u8 as f32);
-        self.button(162.0, 37.0, 34.0, 18.0, 9.0, 0x3A3A3A, 1.0, Act::WaterOn);
-        g.fill_rrect(162.0, 37.0, 34.0, 18.0, 9.0, 0x2699FF, k);
-        let kx = 171.0 + 16.0 * k;
-        g.fill_circle(kx, 46.0, 7.2, WHITE, 1.0);
-        g.icon(glyph::BELL, kx, 46.0, 8.5, if k > 0.5 { 0x2699FF } else { GREY }, 1.0);
-
-        // status line
-        let pct = format!("{}%", w.percent());
-        let tail = if !w.on {
-            " · Reminders off".to_string()
-        } else if w.taken >= w.goal {
-            " · Goal reached".to_string()
-        } else if let Some(n) = w.next_time() {
-            format!(" · Next {}", model::hhmm(n))
-        } else {
-            " · Done for today".to_string()
-        };
-        let mut x = 44.0;
-        for (s, c, wt) in [("Today · ", GREY, 400), (pct.as_str(), BLUE, 700), (tail.as_str(), GREY, 400)] {
-            g.text(s, x, 71.0, 13.0, wt, Align::Left, c, 1.0, 160.0);
-            x += g.measure(s, 13.0, wt);
-        }
-        g.fill_rrect(44.0, 83.5, 152.0, 4.0, 2.0, 0x212121, 1.0);
-        let f = (w.taken as f32 / w.goal.max(1) as f32).min(1.0);
-        if f > 0.0 {
-            g.fill_rrect(44.0, 83.5, (152.0 * f).max(4.0), 4.0, 2.0, BLUE, 1.0);
-        }
-        self.button(44.0, 99.0, 58.0, 25.0, 12.5, 0x0D4580, 1.0, Act::WaterDrink);
-        g.icon(glyph::DROP, 58.0, 111.5, 12.0, CYAN, 1.0);
-        g.text("Drink", 68.0, 111.5, 12.0, 400, Align::Left, WHITE, 1.0, 40.0);
-        self.button(109.0, 99.0, 71.0, 25.0, 12.5, 0x1F1F1F, 1.0, Act::WaterSettings);
-        g.icon(glyph::SLIDERS, 122.0, 111.5, 11.0, WHITE, 1.0);
-        g.text("Settings", 132.0, 111.5, 11.0, 400, Align::Left, WHITE, 1.0, 50.0);
-
-        g.line(207.0, 37.0, 207.0, 120.0, 0x262626, 1.0, 1.0);
-        // sub-page dots
-        for (i, x) in [(0u8, 356.0), (1u8, 365.0)] {
-            g.fill_circle(x, 41.0, 2.0, if self.water_sub == i { WHITE } else { DIM }, 1.0);
-            self.hit(x - 4.0, 36.0, 8.0, 10.0, Act::WaterSub(i));
-        }
-        if self.water_sub == 0 {
-            self.water_gauge();
-        } else {
-            self.water_chart();
-        }
-    }
-
-    pub(super) fn water_gauge(&self) {
-        let g = self.g();
-        let (cx, cy, r) = (293.0, 75.0, 33.0);
-        g.arc(cx, cy, r, 135.0, 270.0, 0x0F2640, 1.0, 6.5);
-        let f = (self.water.taken as f32 / self.water.goal.max(1) as f32).min(1.0);
-        if f > 0.0 {
-            g.arc(cx, cy, r, 135.0, 270.0 * f, BLUE, 1.0, 6.5);
-        }
-        let a = (135.0 + 270.0 * f).to_radians();
-        g.fill_circle(cx + r * a.cos(), cy + r * a.sin(), 4.2, BLUE, 1.0);
-        g.text(&self.water.percent().to_string(), cx, cy - 6.0, 24.0, 700, Align::Center, WHITE, 1.0, 70.0);
-        g.icon(glyph::DROP, cx - 6.0, cy + 15.0, 10.0, BLUE, 1.0);
-        g.text("%", cx + 2.0, cy + 15.0, 12.0, 600, Align::Left, GREY, 1.0, 20.0);
-        self.hit(cx - r, cy - r, r * 2.0, r * 2.0, Act::WaterSub(1));
-    }
-
-    pub(super) fn water_chart(&self) {
-        let g = self.g();
-        let w = &self.water;
-        let first = (w.start / 60) as usize;
-        let last = ((w.end + 59) / 60).min(24) as usize;
-        let n = (last - first).max(1);
-        let (left, right, top, bottom) = (218.0, 344.0, 52.0, 104.0);
-        let maxv = w.hours[first..last].iter().copied().max().unwrap_or(0).max(w.bottle).max(1) as f32;
-        for (frac, label) in [(1.0, format!("{}", maxv as u32)), (0.5, format!("{}", (maxv / 2.0) as u32)), (0.0, "0 ml".to_string())] {
-            let y = bottom - (bottom - top) * frac;
-            g.dashed_line(left, y, right, y, 0x2A2A2A, 1.0, 1.0);
-            g.text(&label, right + 6.0, y, 10.0, 400, Align::Left, GREY, 1.0, 40.0);
-        }
-        let slot = (right - left) / n as f32;
-        let bw = (slot * 0.6).min(9.0);
-        for i in 0..n {
-            let x = left + slot * i as f32 + (slot - bw) / 2.0;
-            g.fill_rrect(x, top, bw, bottom - top, bw / 2.0, 0x161616, 1.0);
-            let v = w.hours[first + i] as f32 / maxv;
-            if v > 0.0 {
-                let hh = ((bottom - top) * v).max(bw);
-                g.fill_rrect(x, bottom - hh, bw, hh, bw / 2.0, BLUE, 1.0);
-            }
-            let hour = first + i;
-            if hour % 3 == 0 {
-                g.text(&format!("{:02}", hour), x + bw / 2.0, 116.0, 10.5, 400, Align::Center, GREY, 1.0, 30.0);
-            }
-        }
-        self.hit(left, top, right - left, bottom - top, Act::WaterSub(0));
+        g.text(&litres, 84.0, 50.0, 26.0, 700, Align::Left, WHITE, 1.0, 100.0);
+        let lw = g.measure(&litres, 26.0, 700);
+        g.text(&format!("/ {:.1} L", w.goal as f32 / 1000.0), 84.0 + lw + 5.0, 54.0, 12.0, 400, Align::Left, GREY, 1.0, 70.0);
+        g.text(&self.water_status(), 84.0, 75.0, 11.0, 400, Align::Left, GREY, 1.0, 140.0);
+        self.water_actions(84.0, 104.0);
+        g.line(236.0, 38.0, 236.0, 120.0, HAIR, 1.0, 1.0);
+        self.water_chart(252.0, 404.0, 42.0, 110.0);
     }
 
     pub(super) fn page_water_settings(&self) {
@@ -280,149 +354,243 @@ impl App {
         g.text(if confirm { "Sure?" } else { "Reset" }, 333.0, 113.0, 11.5, 400, Align::Left, if confirm { RED } else { WHITE }, 1.0, 60.0);
     }
 
-    pub(super) fn page_shelf(&self) {
+    // ------------------------------------------------------------ Shelf
+
+    /// One shelf item: lifts a little on hover; click opens it, dragging takes it out.
+    pub(super) fn shelf_card(&self, i: usize, x: f32, y: f32, w: f32, h: f32) {
         let g = self.g();
-        let items = &self.shelf.items;
-        if items.is_empty() || self.shelf_drag {
-            let accent = if self.shelf_drag { BLUE } else { 0x5A5A5A };
-            if self.shelf_drag {
-                g.fill_rrect(44.0, 33.0, 336.0, 90.0, 13.0, BLUE, 0.08);
-            }
-            g.stroke_rrect(44.0, 33.0, 336.0, 90.0, 13.0, accent, 1.0, 1.3, true);
-            let bob = if self.shelf_drag { (self.started.elapsed().as_secs_f32() * 6.0).sin() * 2.0 } else { 0.0 };
-            g.icon(glyph::DOWNLOAD, 212.0, 62.0 + bob, 20.0, if self.shelf_drag { BLUE } else { WHITE }, 1.0);
-            g.fill_rrect(201.0, 73.0, 22.0, 3.0, 1.5, if self.shelf_drag { BLUE } else { WHITE }, 0.9);
-            g.text(if self.shelf_drag { "Release to add" } else { "Drop files here" }, 212.0, 98.0, 13.0, 400, Align::Center, WHITE, 1.0, 300.0);
-            g.text("Drag out anytime · click to open", 212.0, 112.0, 10.0, 400, Align::Center, GREY, 1.0, 300.0);
-            return;
-        }
-        self.button(338.0, 11.0, 42.0, 17.0, 8.5, 0x1F1F1F, 1.0, Act::ShelfClear);
-        g.text("Clear", 359.0, 19.5, 11.0, 400, Align::Center, WHITE, 1.0, 40.0);
-        let max = 6;
-        for (i, it) in items.iter().enumerate().take(max) {
-            let x = 44.0 + i as f32 * 57.0;
-            let y = 32.0;
-            let act = Act::ShelfItem(i);
-            g.fill_rrect(x, y, 51.0, 88.0, 10.0, 0x161616, 1.0);
-            let k = self.hov(act);
-            if k > 0.0 {
-                g.fill_rrect(x, y, 51.0, 88.0, 10.0, WHITE, 0.07 * k);
-            }
+        let Some(it) = self.shelf.items.get(i) else { return };
+        let act = Act::ShelfItem(i);
+        let k = self.hov(act);
+        let y = y - 3.0 * k;
+        g.fill_rrect(x, y, w, h, 12.0, CARD, 1.0);
+        g.stroke_rrect(x, y, w, h, 12.0, mix(HAIR, 0x4A4A4A, k), 1.0, 1.0, false);
+        let thumb = if it.kind == Kind::Image { self.thumb(&it.path) } else { None };
+        if let Some(bmp) = &thumb {
+            // images (screenshots) show a picture instead of an icon
+            g.bitmap_rounded(bmp, x + 4.0, y + 4.0, w - 8.0, h * 0.56, 9.0);
+        } else {
             let (gl, c) = match it.kind {
                 Kind::Folder => (glyph::FOLDER, 0xFFC94A),
                 Kind::Link => (glyph::LINK, BLUE),
                 Kind::Image => (glyph::PICTURE, 0xFF7AB6),
                 Kind::File => (glyph::DOC, 0xCFCFCF),
             };
-            g.icon(gl, x + 25.5, y + 28.0, 22.0, c, 1.0);
-            g.text(&it.name, x + 25.5, y + 58.0, 10.0, 400, Align::Center, 0xD8D8D8, 1.0, 46.0);
-            let sub = if it.kind == Kind::Folder || it.kind == Kind::Link { "".to_string() } else { shelf::size_label(it.size) };
-            g.text(&sub, x + 25.5, y + 72.0, 9.0, 400, Align::Center, DIM, 1.0, 46.0);
-            self.hit(x, y, 51.0, 88.0, act);
+            g.icon(gl, x + w / 2.0, y + h * 0.32, 22.0, c, 1.0);
         }
-        if items.len() > max {
-            g.text(&format!("+{}", items.len() - max), 380.0, 128.0, 10.0, 400, Align::Right, GREY, 1.0, 40.0);
+        let (ny, sy) = if thumb.is_some() { (y + h * 0.72, y + h * 0.87) } else { (y + h * 0.64, y + h * 0.8) };
+        g.text(&it.name, x + w / 2.0, ny, 10.0, 400, Align::Center, 0xD8D8D8, 1.0, w - 6.0);
+        let sub = if it.kind == Kind::Folder || it.kind == Kind::Link { String::new() } else { shelf::size_label(it.size) };
+        g.text(&sub, x + w / 2.0, sy, 9.0, 400, Align::Center, DIM, 1.0, w - 6.0);
+        self.hit(x, y, w, h, act);
+        // remove button, shown while the card (or the button itself) is hovered
+        let rm = Act::ShelfRemove(i);
+        let shown = k.max(self.hov(rm));
+        if shown > 0.05 {
+            let (bx, by) = (x + w - 8.0, y + 8.0);
+            let s = self.squeeze(rm) * (1.0 + 0.15 * self.hov(rm));
+            g.fill_circle(bx, by, 8.0 * s, mix(0x2A2A2A, RED, self.hov(rm)), shown);
+            g.icon(glyph::CLOSE, bx, by, 7.0 * s, WHITE, shown);
+            self.hit(bx - 9.0, by - 9.0, 18.0, 18.0, rm);
+        }
+    }
+
+    /// Thumbnail of an image on the Shelf, decoded once (small) and cached.
+    pub(super) fn thumb(&self, path: &std::path::Path) -> Option<ID2D1Bitmap> {
+        if let Some((_, b)) = self.thumbs.borrow().iter().find(|(p, _)| p == path) {
+            return b.clone();
+        }
+        let bmp = std::fs::read(path).ok().and_then(|bytes| self.g().bitmap_from_bytes(&bytes));
+        let mut cache = self.thumbs.borrow_mut();
+        if cache.len() >= 16 {
+            cache.remove(0);
+        }
+        cache.push((path.to_path_buf(), bmp.clone()));
+        bmp
+    }
+
+    /// Shelf item indices to show, newest first.
+    pub(super) fn shelf_order(&self, max: usize) -> Vec<usize> {
+        (0..self.shelf.items.len()).rev().take(max).collect()
+    }
+
+    /// Dashed drop target; glows amber and bobs while files are dragged over the notch.
+    pub(super) fn drop_card(&self, x: f32, y: f32, w: f32, h: f32, more: usize) {
+        let g = self.g();
+        let drag = self.shelf_drag;
+        if drag {
+            g.fill_rrect(x, y, w, h, 12.0, AMBER, 0.06);
+        }
+        g.stroke_rrect(x, y, w, h, 12.0, if drag { AMBER } else { 0x3A3A3A }, 1.0, 1.3, true);
+        let bob = if drag { (self.started.elapsed().as_secs_f32() * 6.0).sin() * 2.5 } else { 0.0 };
+        let wide = w > 120.0;
+        let cy = y + h * if wide { 0.38 } else { 0.4 };
+        g.icon(if drag { glyph::DOWNLOAD } else { glyph::ADD }, x + w / 2.0, cy + bob, 18.0, if drag { AMBER } else { 0x8A8A8A }, 1.0);
+        let label = if drag {
+            "Release to add".to_string()
+        } else if more > 0 {
+            format!("+{} more", more)
+        } else if wide {
+            "Drop files here".to_string()
+        } else {
+            "Drop here".to_string()
+        };
+        g.text(&label, x + w / 2.0, y + h * 0.68, if wide { 12.5 } else { 10.0 }, 400, Align::Center, if drag { AMBER } else { 0x9A9A9A }, 1.0, w - 6.0);
+        if wide && !drag {
+            g.text("Drag them back out anytime · click to open", x + w / 2.0, y + h * 0.84, 10.0, 400, Align::Center, DIM, 1.0, w - 10.0);
+        }
+    }
+
+    /// "N items" and Clear next to the Shelf title.
+    pub(super) fn shelf_header(&self, left: f32, cy: f32) {
+        let n = self.shelf.items.len();
+        if n == 0 {
+            return;
+        }
+        let end = self.header_note("Shelf", &format!("{} item{}", n, if n == 1 { "" } else { "s" }), left, cy);
+        self.button(end + 10.0, cy - 8.5, 42.0, 17.0, 8.5, 0x1F1F1F, 1.0, Act::ShelfClear);
+        self.g().text("Clear", end + 31.0, cy, 11.0, 400, Align::Center, WHITE, 1.0, 40.0);
+    }
+
+    pub(super) fn page_shelf(&self) {
+        self.shelf_header(16.0, 17.0);
+        let n = self.shelf.items.len();
+        let (x0, y, h, cw, gap) = (16.0, 34.0, 90.0, 58.0, 8.0);
+        let order = self.shelf_order(5);
+        let shown = order.len();
+        for (k, &i) in order.iter().enumerate() {
+            self.shelf_card(i, x0 + k as f32 * (cw + gap), y, cw, h);
+        }
+        let dx = x0 + shown as f32 * (cw + gap);
+        self.drop_card(dx, y, 404.0 - dx, h, n - shown);
+    }
+
+    // ------------------------------------------------------------ To-do
+
+    /// One task row: check circle, title (struck through as it completes), time chip
+    /// (amber outline while it is still ahead), and an edit button when selected.
+    pub(super) fn todo_row(&self, i: usize, x: f32, y: f32, w: f32, h: f32) {
+        let g = self.g();
+        let Some(t) = self.tasks.get(i) else { return };
+        let cy = y + h / 2.0;
+        let sel = self.task_sel == Some(i);
+        let k = self.fx.level(Act::TodoRow(i), sel as u8 as f32).max(self.hov(Act::TodoRow(i)));
+        if k > 0.0 {
+            g.fill_rrect(x, y, w, h, 8.0, 0x1A1A1A, k);
+        }
+        self.hit(x + 24.0, y, w - 24.0, h, Act::TodoRow(i));
+        self.check_mark(i, t.done, x + 12.0, cy);
+        self.hit(x, y, 24.0, h, Act::TodoCheck(i));
+        let time = match (t.start, t.end) {
+            (Some(s), Some(e)) => format!("{}–{}", model::hhmm(s), model::hhmm(e)),
+            (Some(s), None) => model::hhmm(s),
+            _ => String::new(),
+        };
+        let mut right = x + w - 6.0;
+        if !time.is_empty() {
+            let ahead = !t.done && t.start.is_some_and(|s| s >= model::now().minutes);
+            let tw = g.measure(&time, 10.0, 400) + 14.0;
+            if ahead {
+                g.stroke_rrect(right - tw, cy - 9.0, tw, 18.0, 9.0, AMBER, 1.0, 1.0, false);
+            }
+            g.text(&time, right - tw / 2.0, cy, 10.0, 400, Align::Center, if ahead { AMBER } else { GREY }, 1.0, tw);
+            right -= tw + 6.0;
+        }
+        if sel && self.form.is_none() {
+            self.round_button(right - 9.0, cy, 9.0, 0x262626, glyph::EDIT, 9.0, WHITE, Act::TodoEdit);
+            right -= 24.0;
+        }
+        let d = self.fx.level(Act::TodoCheck(i), t.done as u8 as f32);
+        let tx = x + 26.0;
+        let max_w = right - tx - 6.0;
+        g.text(&t.title, tx, cy, 12.5, 400, Align::Left, mix(WHITE, DIM, d), 1.0, max_w);
+        if d > 0.0 {
+            let lw = g.measure(&t.title, 12.5, 400).min(max_w);
+            g.line(tx, cy + 0.5, tx + lw * d, cy + 0.5, DIM, 1.0, 1.0);
+        }
+    }
+
+    /// Empty list: a short invitation instead of a big box.
+    pub(super) fn todo_empty(&self, cx: f32, cy: f32) {
+        let g = self.g();
+        g.text("No tasks yet", cx, cy, 13.0, 700, Align::Center, 0x8A8A8A, 1.0, 200.0);
+        g.text("Press + to add one", cx, cy + 20.0, 11.0, 400, Align::Center, DIM, 1.0, 200.0);
+    }
+
+    pub(super) fn todo_scrollbar(&self, x: f32, top: f32, height: f32, rows: usize) {
+        let n = self.tasks.len();
+        if n > rows {
+            let h = height * rows as f32 / n as f32;
+            let y = top + (height - h) * self.task_scroll as f32 / (n - rows) as f32;
+            self.g().fill_rrect(x, y, 2.0, h, 1.0, 0x4A4A4A, 1.0);
         }
     }
 
     pub(super) fn page_todo(&self) {
-        let g = self.g();
         let done = self.tasks.iter().filter(|t| t.done).count();
-        g.text(&format!("{}/{}", done, self.tasks.len()), 44.0, 50.0, 34.0, 700, Align::Left, WHITE, 1.0, 150.0);
-        g.text("Task Done Today", 44.0, 81.0, 12.0, 400, Align::Left, GREY, 1.0, 150.0);
-
-        let adding = self.form.as_ref().map_or(false, |f| f.edit.is_none());
-        self.button(42.0, 95.0, 73.0, 27.0, 13.5, if adding { 0x0F2B17 } else { 0x262626 }, 1.0, Act::TodoAdd);
-        g.icon(glyph::ADD_CIRCLE, 56.0, 108.5, 13.0, if adding { GREEN } else { WHITE }, 1.0);
-        g.text("Add Task", 66.0, 108.5, 10.5, 400, Align::Left, if adding { GREEN } else { WHITE }, 1.0, 50.0);
-        let can_edit = self.task_sel.is_some() && self.form.is_none();
-        if can_edit {
-            self.button(120.0, 95.0, 71.0, 27.0, 13.5, 0x262626, 1.0, Act::TodoEdit);
-        } else {
-            g.fill_rrect(120.0, 95.0, 71.0, 27.0, 13.5, 0x121212, 1.0);
+        if !self.tasks.is_empty() {
+            self.header_note("To-do", &format!("{} of {} done", done, self.tasks.len()), 16.0, 17.0);
         }
-        let ec = if can_edit { WHITE } else { 0x4A4A4A };
-        g.icon(glyph::EDIT, 133.0, 108.5, 12.0, ec, 1.0);
-        g.text("Edit Task", 143.0, 108.5, 10.5, 400, Align::Left, ec, 1.0, 50.0);
-
-        g.fill_rrect(197.0, 32.0, 179.0, 91.0, 14.0, 0x131313, 1.0);
+        self.plus_button(350.0, 17.0);
         if let Some(f) = &self.form {
-            self.todo_form(f);
+            self.todo_form(f, 16.0, 36.0, 388.0, false);
             return;
         }
         if self.tasks.is_empty() {
-            g.fill_rrect(270.0, 45.0, 32.0, 32.0, 8.0, 0x414141, 1.0);
-            g.icon(glyph::CHECKLIST, 286.0, 61.0, 17.0, 0x1A1A1A, 1.0);
-            g.text("No tasks.", 286.5, 98.0, 13.0, 400, Align::Center, 0x7A7A7A, 1.0, 160.0);
+            self.todo_empty(210.0, 66.0);
             return;
         }
         for (row, i) in (self.task_scroll..self.tasks.len()).take(3).enumerate() {
-            let t = &self.tasks[i];
-            let y = 38.0 + row as f32 * 27.0;
-            let sel = self.task_sel == Some(i);
-            let k = self.fx.level(Act::TodoRow(i), sel as u8 as f32).max(self.hov(Act::TodoRow(i)));
-            if k > 0.0 {
-                g.fill_rrect(202.0, y, 169.0, 25.0, 8.0, 0x1F1F1F, k);
-            }
-            self.hit(222.0, y, 149.0, 25.0, Act::TodoRow(i));
-            self.check_mark(i, t.done, 212.0, y + 12.5);
-            self.hit(202.0, y, 20.0, 25.0, Act::TodoCheck(i));
-            let time = match (t.start, t.end) {
-                (Some(s), Some(e)) => format!("{}–{}", model::hhmm(s), model::hhmm(e)),
-                (Some(s), None) => model::hhmm(s),
-                _ => String::new(),
-            };
-            let tw = if time.is_empty() { 0.0 } else { g.measure(&time, 10.0, 400) + 8.0 };
-            g.text(&t.title, 224.0, y + 12.5, 12.5, 400, Align::Left, if t.done { DIM } else { WHITE }, 1.0, 143.0 - tw);
-            if t.done {
-                let lw = g.measure(&t.title, 12.5, 400).min(143.0 - tw);
-                g.line(224.0, y + 13.0, 224.0 + lw, y + 13.0, DIM, 1.0, 1.0);
-            }
-            if !time.is_empty() {
-                g.text(&time, 366.0, y + 12.5, 10.0, 400, Align::Right, GREY, 1.0, 80.0);
-            }
+            self.todo_row(i, 16.0, 34.0 + row as f32 * 28.0, 384.0, 26.0);
         }
-        if self.tasks.len() > 3 {
-            let n = self.tasks.len() as f32;
-            let h = 80.0 * 3.0 / n;
-            let y = 38.0 + (80.0 - h) * self.task_scroll as f32 / (n - 3.0);
-            g.fill_rrect(372.0, y, 2.0, h, 1.0, 0x4A4A4A, 1.0);
-        }
+        self.todo_scrollbar(404.0, 34.0, 82.0, 3);
     }
 
-    pub(super) fn todo_form(&self, f: &Form) {
+    /// Title and time inputs side by side (`stacked`: one above the other), then
+    /// Cancel / Save (and Delete when editing).
+    pub(super) fn todo_form(&self, f: &Form, x: f32, y: f32, w: f32, stacked: bool) {
         let g = self.g();
         let blink = (self.started.elapsed().as_millis() / 530) % 2 == 0;
         let focus_title = f.field == 0;
-        g.fill_rrect(202.0, 41.0, 168.0, 25.0, 8.0, 0x080808, 1.0);
-        g.stroke_rrect(202.0, 41.0, 168.0, 25.0, 8.0, if focus_title { 0xD9D9D9 } else { 0x333333 }, 1.0, 1.4, false);
-        self.hit(202.0, 41.0, 168.0, 25.0, Act::TodoTitle);
-        if f.title.is_empty() {
-            g.text("Task title", 211.0, 53.5, 12.5, 400, Align::Left, 0x6A6A6A, 1.0, 150.0);
-        }
-        if !f.title.is_empty() || focus_title {
-            let cursor = if focus_title && blink { "|" } else { "" };
+        let (tw, tx2, ty2) = if stacked { (w, x, y + 34.0) } else { (w * 0.6, x + w * 0.6 + 8.0, y) };
+        let time_w = if stacked { w } else { w - w * 0.6 - 8.0 };
+        g.fill_rrect(x, y, tw, 26.0, 8.0, 0x0A0A0A, 1.0);
+        g.stroke_rrect(x, y, tw, 26.0, 8.0, if focus_title { AMBER } else { 0x333333 }, 1.0, 1.2, false);
+        self.hit(x, y, tw, 26.0, Act::TodoTitle);
+        if f.title.is_empty() && !focus_title {
+            g.text("Task title", x + 10.0, y + 13.0, 12.5, 400, Align::Left, 0x6A6A6A, 1.0, tw - 16.0);
+        } else {
             // show the tail of long titles
             let mut shown = f.title.clone();
-            while g.measure(&shown, 12.5, 400) > 148.0 && !shown.is_empty() {
+            while g.measure(&shown, 12.5, 400) > tw - 24.0 && !shown.is_empty() {
                 shown.remove(0);
             }
-            g.text(&format!("{}{}", shown, cursor), 211.0, 53.5, 12.5, 400, Align::Left, WHITE, 1.0, 155.0);
+            let cursor = if focus_title && blink { "|" } else { "" };
+            g.text(&format!("{}{}", shown, cursor), x + 10.0, y + 13.0, 12.5, 400, Align::Left, WHITE, 1.0, tw - 14.0);
         }
-        g.fill_rrect(202.0, 69.0, 168.0, 24.0, 8.0, 0x212124, 1.0);
-        if !focus_title {
-            g.stroke_rrect(202.0, 69.0, 168.0, 24.0, 8.0, 0xD9D9D9, 1.0, 1.2, false);
-        }
-        self.hit(202.0, 69.0, 168.0, 24.0, Act::TodoTime);
-        g.icon(glyph::CLOCK, 215.0, 81.0, 12.0, WHITE, 1.0);
+        g.fill_rrect(tx2, ty2, time_w, 26.0, 8.0, 0x141414, 1.0);
+        g.stroke_rrect(tx2, ty2, time_w, 26.0, 8.0, if focus_title { 0x333333 } else { AMBER }, 1.0, 1.2, false);
+        self.hit(tx2, ty2, time_w, 26.0, Act::TodoTime);
+        g.icon(glyph::CLOCK, tx2 + 14.0, ty2 + 13.0, 11.0, GREY, 1.0);
         let mask = model::time_mask(&f.digits);
-        g.text(&mask, 228.0, 81.0, 12.5, 400, Align::Left, if f.digits.is_empty() { 0x6A6A6A } else { WHITE }, 1.0, 130.0);
+        g.text(&mask, tx2 + 26.0, ty2 + 13.0, 12.0, 400, Align::Left, if f.digits.is_empty() { 0x6A6A6A } else { WHITE }, 1.0, time_w - 30.0);
+
+        let by = if stacked { y + 72.0 } else { y + 38.0 };
+        let bw = if stacked { (w - 8.0) / 2.0 } else { 80.0 };
+        let (cx, sx) = if stacked { (x, x + bw + 8.0) } else { (x + w - 2.0 * bw - 8.0, x + w - bw) };
+        self.button(cx, by, bw, 24.0, 12.0, 0x262626, 1.0, Act::TodoCancel);
+        g.text("Cancel", cx + bw / 2.0, by + 12.0, 12.0, 400, Align::Center, WHITE, 1.0, bw);
+        self.button(sx, by, bw, 24.0, 12.0, AMBER, 1.0, Act::TodoSave);
+        g.text("Save", sx + bw / 2.0, by + 12.0, 12.0, 700, Align::Center, ON_AMBER, 1.0, bw);
         if f.edit.is_some() {
-            self.round_button(358.0, 81.0, 8.0, 0x2A1515, glyph::DELETE, 8.5, RED, Act::TodoDelete);
+            let (dx, dy) = if stacked { (x + w - 12.0, by + 44.0) } else { (x + 12.0, by + 12.0) };
+            self.round_button(dx, dy, 11.0, 0x2A1515, glyph::DELETE, 9.5, RED, Act::TodoDelete);
         }
-        self.button(203.0, 99.0, 80.0, 20.0, 10.0, 0x262626, 1.0, Act::TodoCancel);
-        g.text("Cancel", 243.0, 109.0, 12.0, 400, Align::Center, WHITE, 1.0, 70.0);
-        self.button(290.0, 99.0, 80.0, 20.0, 10.0, GREEN, 1.0, Act::TodoSave);
-        g.text("Save", 330.0, 109.0, 12.0, 700, Align::Center, 0x0B2A12, 1.0, 70.0);
+        let hint = "Enter saves · Esc cancels · Tab: time (HHMM HHMM)";
+        if stacked {
+            g.text_box(hint, x, by + 64.0, w, 40.0, 10.0, 400, DIM, 1.0);
+        } else {
+            g.text(hint, if f.edit.is_some() { x + 30.0 } else { x }, by + 12.0, 10.0, 400, Align::Left, DIM, 1.0, w - 2.0 * bw - 40.0);
+        }
     }
 }

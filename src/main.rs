@@ -10,6 +10,7 @@
 //!             --test-media (logs the current media session and album-art size, then exits),
 //!             --test-roman "line|line" (logs the romanization of each line, then exits).
 
+mod audio;
 mod gfx;
 mod jdict;
 mod json;
@@ -122,7 +123,10 @@ fn tray_menu(hwnd: HWND) {
         let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_BOTTOMALIGN | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
         let _ = DestroyMenu(menu);
         match cmd.0 as u32 {
-            ID_AUTOSTART => model::set_autostart(!model::autostart_enabled()),
+            ID_AUTOSTART => {
+                model::set_autostart(!model::autostart_enabled());
+                with_app(|a| a.sync_autostart());
+            }
             ID_MASCOT => {
                 with_app(|a| a.toggle_pet());
             }

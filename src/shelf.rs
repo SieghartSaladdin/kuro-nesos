@@ -143,6 +143,24 @@ impl Shelf {
         self.save();
     }
 
+    /// Adds a file by reference (it is not copied), e.g. a new screenshot.
+    pub fn add_path(&mut self, p: PathBuf) {
+        self.push(p);
+        self.save();
+    }
+
+    /// Removes one item; a copy that lives inside the shelf folder is deleted, files kept
+    /// by reference (screenshots, folders) stay where they are.
+    pub fn remove(&mut self, i: usize) {
+        if i < self.items.len() {
+            let it = self.items.remove(i);
+            if it.path.starts_with(shelf_dir()) {
+                let _ = fs::remove_file(&it.path);
+            }
+            self.save();
+        }
+    }
+
     /// Removes everything; copies that live inside the shelf folder are deleted.
     pub fn clear(&mut self) {
         let dir = shelf_dir();

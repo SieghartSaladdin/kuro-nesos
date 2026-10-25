@@ -32,6 +32,16 @@ impl Spring {
     }
 }
 
+/// Blends two 0xRRGGBB colours (t = 0 gives `a`, 1 gives `b`).
+pub(super) fn mix(a: u32, b: u32, t: f32) -> u32 {
+    let t = t.clamp(0.0, 1.0);
+    let ch = |s: u32| {
+        let (x, y) = (((a >> s) & 255) as f32, ((b >> s) & 255) as f32);
+        ((x + (y - x) * t).round() as u32) << s
+    };
+    ch(16) | ch(8) | ch(0)
+}
+
 pub(super) fn ease(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)

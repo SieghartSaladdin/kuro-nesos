@@ -12,6 +12,9 @@ impl App {
         if m.key() != self.media.key() || m.playing != self.media.playing {
             self.dirty = true;
         }
+        if m.key() != self.media.key() {
+            self.track_change = Instant::now();
+        }
         self.media = m;
         if !self.media.title.is_empty() && self.settings.lyrics {
             if self.demo.lyrics && self.media.title == media::DEMO_TITLE {
@@ -69,118 +72,102 @@ impl App {
         l.lines = (0..24).map(|i| lyrics::Line { t: 2.0 + i as f64 * 3.9, text: LINES[i % LINES.len()].to_string(), roman: None }).collect();
     }
 
+    /// 0..0.06 scale bump of the album art right after the track changes.
+    pub(super) fn cover_bump(&self) -> f32 {
+        let e = self.track_change.elapsed().as_secs_f32();
+        if e < 0.45 {
+            (e / 0.45 * std::f32::consts::PI).sin() * 0.06
+        } else {
+            0.0
+        }
+    }
+
+    /// Top dock: big cover on the left; title, lyric and controls on the right; the
+    /// progress line runs along the bottom.
     pub(super) fn page_media(&self) {
         let g = self.g();
         let m = &self.media;
-        self.art(44.0, 12.0, 62.0, 10.0);
         let has = m.has_session && !m.title.is_empty();
+        let s = 100.0 * (1.0 + self.cover_bump());
+        self.art(66.0 - s / 2.0, 64.0 - s / 2.0, s, 16.0);
+        let (x, lw) = (130.0, 274.0);
+        if has {
+            g.text(&m.title, x, 21.0, 14.5, 700, Align::Left, WHITE, 1.0, 228.0);
+            g.text(&m.artist, x, 38.0, 11.5, 400, Align::Left, GREY, 1.0, 228.0);
+        }
         let lyric_on = self.settings.lyrics && has;
         let status = self.lyrics.lock().unwrap().status.clone();
-        if lyric_on && self.lyric_idx.is_some() {
-            // with romaji on: romanized line large, the original script small underneath;
-            // otherwise the current line and the next one
-            let (cur, next) = {
-                let l = self.lyrics.lock().unwrap();
-                let i = self.lyric_idx.unwrap();
-                let line = l.lines.get(i);
-                let text = line.map(|x| x.text.clone()).unwrap_or_default();
-                match line.and_then(|x| x.roman.clone()).filter(|_| self.settings.romaji) {
-                    Some(roman) => (roman, text),
-                    None => {
-                        let next = l.lines.get(i + 1).map(|x| if self.settings.romaji { x.roman.clone().unwrap_or_else(|| x.text.clone()) } else { x.text.clone() });
-                        (text, next.unwrap_or_default())
-                    }
+        match self.lyric_pair().filter(|_| lyric_on) {
+            Some((cur, sub)) => {
+                let t = ease(self.lyric_change.elapsed().as_secs_f32() / 0.3);
+                let a = g.alpha.get();
+                g.alpha.set(a * t);
+                let rise = (1.0 - t) * 5.0;
+                if cur.is_empty() {
+                    g.icon(glyph::MUSIC, x + 9.0, 60.0 + rise, 18.0, WHITE, 1.0);
+                } else if g.measure(&cur, 13.0, 700) <= lw {
+                    let cs = fit_size(g, &cur, lw, 15.5, 13.0, 700);
+                    g.text(&cur, x, 60.0 + rise, cs, 700, Align::Left, WHITE, 1.0, lw);
+                } else {
+                    g.text_box(&cur, x, 47.0 + rise, lw, 30.0, 12.0, 700, WHITE, 1.0);
                 }
-            };
-            let t = ease(self.lyric_change.elapsed().as_secs_f32() / 0.3);
-            let a = g.alpha.get();
-            g.alpha.set(a * t);
-            let cur = if cur.is_empty() { "♪".to_string() } else { cur };
-            let width = 262.0;
-            let rise = (1.0 - t) * 5.0;
-            if g.measure(&cur, 13.0, 700) <= width {
-                // fits on one line: biggest size that fits, then next line and credit
-                let cs = fit_size(g, &cur, width, 15.0, 13.0, 700);
-                let ns = fit_size(g, &next, width, 12.0, 10.0, 400);
-                g.text(&cur, 122.0, 33.0 + rise, cs, 700, Align::Left, WHITE, 1.0, width);
-                g.text(&next, 122.0, 52.0, ns, 400, Align::Left, DIM, 1.0, width);
-                g.alpha.set(a);
-                let credit = if m.artist.is_empty() { m.title.clone() } else { format!("{} · {}", m.title, m.artist) };
-                g.text(&credit, 122.0, 68.0, 10.5, 400, Align::Left, GREY, 1.0, width);
-            } else {
-                // long line: wrap onto two lines, next line underneath
-                g.text_box(&cur, 122.0, 25.0 + rise, width, 38.0, 13.5, 700, WHITE, 1.0);
-                let ns = fit_size(g, &next, width, 11.5, 10.0, 400);
-                g.text(&next, 122.0, 70.0, ns, 400, Align::Left, DIM, 1.0, width);
+                g.text(&sub, x, 83.0, 10.5, 400, Align::Left, DIM, 1.0, lw);
                 g.alpha.set(a);
             }
-        } else if has {
-            g.text(&m.title, 122.0, 37.0, 14.5, 700, Align::Left, WHITE, 1.0, 258.0);
-            let sub = if lyric_on && status == LyricsStatus::Loading {
-                "Loading lyrics".to_string()
-            } else if lyric_on && status == LyricsStatus::NotFound {
-                format!("{} · Lyrics not available", m.artist)
-            } else {
-                m.artist.clone()
-            };
-            g.text(&sub, 122.0, 57.0, 12.0, 400, Align::Left, GREY, 1.0, 258.0);
-        } else {
-            g.text("Tidak ada media", 122.0, 46.0, 14.5, 700, Align::Left, WHITE, 1.0, 258.0);
-        }
-
-        // timeline
-        let pos = m.pos_now();
-        g.text(&mmss(pos), 44.0, 91.0, 13.0, 400, Align::Left, 0x7A7A7A, 1.0, 60.0);
-        g.text(&format!("-{}", mmss(m.duration - pos)), 376.0, 91.0, 13.0, 400, Align::Right, 0x7A7A7A, 1.0, 70.0);
-        let (bx, bw) = (96.0, 222.0);
-        g.fill_rrect(bx, 89.5, bw, 3.0, 1.5, 0x1F1F1F, 1.0);
-        if m.duration > 0.0 {
-            let f = (pos / m.duration).clamp(0.0, 1.0) as f32;
-            g.fill_rrect(bx, 89.5, (bw * f).max(3.0), 3.0, 1.5, 0xD8D8D8, 1.0);
-            let k = self.hov(Act::MediaSeek);
-            if k > 0.0 {
-                g.fill_circle(bx + bw * f, 91.0, 4.5 * k, WHITE, k);
+            None if has => {
+                let note = if lyric_on && status == LyricsStatus::Loading {
+                    "Loading lyrics"
+                } else if lyric_on && status == LyricsStatus::NotFound {
+                    "Lyrics not available"
+                } else {
+                    ""
+                };
+                g.text(note, x, 62.0, 11.5, 400, Align::Left, DIM, 1.0, lw);
             }
+            None => g.text("Nothing playing", x, 56.0, 14.5, 700, Align::Left, 0x8A8A8A, 1.0, lw),
         }
-        self.hit(bx, 83.0, bw, 16.0, Act::MediaSeek);
 
-        // controls
+        // previous / play / next, with time, romaji and lyrics on the right
+        let cy = 107.0;
         let fg = if has { WHITE } else { 0x7A7A7A };
-        let lyr_color = if self.settings.lyrics && has { WHITE } else { 0x7A7A7A };
-        g.icon(glyph::MESSAGE, 75.0, 117.0, 15.0, lyr_color, 1.0);
-        if self.settings.lyrics && has {
-            g.fill_circle(85.0, 109.5, 2.4, GREEN, 1.0);
+        let tri = |cx: f32, dir: f32, s: f32| vec![(cx - dir * s * 0.55, cy - s * 0.6), (cx - dir * s * 0.55, cy + s * 0.6), (cx + dir * s * 0.65, cy)];
+        for (cx, dir, act) in [(141.0, -1.0, Act::MediaPrev), (205.0, 1.0, Act::MediaNext)] {
+            self.hover_ring(act, cx, cy, 12.0, 0.08);
+            let cx = cx + dir * 2.0 * self.hov(act);
+            g.polygon(&tri(cx - dir * 4.5, dir, 8.0), fg, 0.8);
+            g.polygon(&tri(cx + dir * 3.5, dir, 8.0), fg, 0.8);
+            self.hit(cx - 13.0, cy - 12.0, 26.0, 24.0, act);
         }
-        self.hit(62.0, 105.0, 26.0, 24.0, Act::Lyrics);
-        // romaji toggle chip
+        self.play_button(173.0, cy, 11.5, has);
+        let pos = m.pos_now();
+        if m.duration > 0.0 {
+            g.text(&format!("{} / {}", mmss(pos), mmss(m.duration)), 330.0, cy, 11.0, 400, Align::Right, GREY, 1.0, 110.0);
+        }
         let ron = self.settings.romaji;
         let rk = self.fx.level(Act::Romaji, ron as u8 as f32).max(self.hov(Act::Romaji));
         if rk > 0.0 {
-            g.fill_rrect(93.0, 108.0, 26.0, 18.0, 9.0, 0x262626, rk);
+            g.fill_rrect(340.0, cy - 9.0, 26.0, 18.0, 9.0, 0x262626, rk);
         }
-        g.text("Aa", 106.0, 117.0, 10.5, 700, Align::Center, if ron { WHITE } else { 0x7A7A7A }, 1.0, 26.0);
-        if ron {
-            g.fill_circle(117.0, 109.5, 2.4, GREEN, 1.0);
+        g.text("Aa", 353.0, cy, 10.5, 700, Align::Center, if ron { AMBER } else { 0x7A7A7A }, 1.0, 26.0);
+        self.hit(338.0, cy - 12.0, 30.0, 24.0, Act::Romaji);
+        let lyr = self.settings.lyrics && has;
+        g.icon(glyph::MESSAGE, 387.0, cy, 14.0, if lyr { WHITE } else { 0x7A7A7A }, 1.0);
+        if lyr {
+            g.fill_circle(396.0, cy - 7.0, 2.2, AMBER, 1.0);
         }
-        self.hit(91.0, 105.0, 30.0, 24.0, Act::Romaji);
-        let tri = |cx: f32, dir: f32, s: f32| vec![(cx - dir * s * 0.55, 117.0 - s * 0.6), (cx - dir * s * 0.55, 117.0 + s * 0.6), (cx + dir * s * 0.65, 117.0)];
-        // previous / next: double triangles
-        for (cx, dir, act) in [(163.0, -1.0, Act::MediaPrev), (257.0, 1.0, Act::MediaNext)] {
-            self.hover_ring(act, cx, 117.0, 14.0, 0.08);
-            g.polygon(&tri(cx - dir * 5.0, dir, 9.0), fg, 0.8);
-            g.polygon(&tri(cx + dir * 4.0, dir, 9.0), fg, 0.8);
-            self.hit(cx - 14.0, 104.0, 28.0, 26.0, act);
+        self.hit(374.0, cy - 12.0, 28.0, 24.0, Act::Lyrics);
+
+        // progress along the bottom, edge to edge
+        let (bx, bw, by) = (16.0, 388.0, 125.0);
+        g.fill_rrect(bx, by, bw, 3.0, 1.5, 0x1F1F1F, 1.0);
+        if m.duration > 0.0 {
+            let f = (pos / m.duration).clamp(0.0, 1.0) as f32;
+            g.fill_rrect(bx, by, (bw * f).max(3.0), 3.0, 1.5, AMBER, 1.0);
+            let k = self.hov(Act::MediaSeek);
+            if k > 0.0 {
+                g.fill_circle(bx + bw * f, by + 1.5, 4.5 * k, WHITE, k);
+            }
         }
-        self.hover_ring(Act::MediaPlay, 211.0, 117.0, 15.0, 0.08);
-        // pause bars and play triangle cross-fade
-        let pl = self.fx.level(Act::MediaPlay, m.playing as u8 as f32);
-        if pl > 0.0 {
-            g.fill_rrect(204.0, 108.5 + (1.0 - pl) * 3.0, 4.6, 17.0 - (1.0 - pl) * 6.0, 1.5, fg, pl);
-            g.fill_rrect(213.4, 108.5 + (1.0 - pl) * 3.0, 4.6, 17.0 - (1.0 - pl) * 6.0, 1.5, fg, pl);
-        }
-        if pl < 1.0 {
-            g.polygon(&[(205.0, 107.5), (205.0, 126.5), (220.5, 117.0)], fg, 1.0 - pl);
-        }
-        self.hit(196.0, 103.0, 30.0, 28.0, Act::MediaPlay);
+        self.hit(bx, by - 7.0, bw, 16.0, Act::MediaSeek);
     }
 }

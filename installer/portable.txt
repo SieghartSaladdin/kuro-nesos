@@ -1,0 +1,8 @@
+Kuro Nesos - portable mode
+
+While this file sits next to kuro-nesos.exe, Kuro Nesos keeps everything (settings, water
+log, to-do list, shelf items, log file and the Japanese dictionary) in the "KuroNesosData"
+folder beside it instead of %APPDATA% / %LOCALAPPDATA%, so the whole folder can be moved or
+carried on a USB stick.
+
+Delete this file to switch back to the normal per-user locations.

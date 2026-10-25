@@ -261,10 +261,6 @@ impl Gfx {
         unsafe { self.rt().DrawLine(pt(x1, y1), pt(x2, y2), self.set(hex, a), width, &self.round) };
     }
 
-    pub fn dashed_line(&self, x1: f32, y1: f32, x2: f32, y2: f32, hex: u32, a: f32, width: f32) {
-        unsafe { self.rt().DrawLine(pt(x1, y1), pt(x2, y2), self.set(hex, a), width, &self.dashed) };
-    }
-
     fn path(&self) -> Option<(ID2D1PathGeometry1, ID2D1GeometrySink)> {
         unsafe {
             let g = self.factory.CreatePathGeometry().ok()?;
@@ -300,32 +296,6 @@ impl Gfx {
     }
 
     /// Filled pie slice (used for tiny progress indicators).
-    pub fn pie(&self, cx: f32, cy: f32, r: f32, start: f32, sweep: f32, hex: u32, a: f32) {
-        if sweep >= 359.5 {
-            self.fill_circle(cx, cy, r, hex, a);
-            return;
-        }
-        if sweep < 0.5 {
-            return;
-        }
-        let (a0, a1) = (start.to_radians(), (start + sweep).to_radians());
-        let Some((g, sink)) = self.path() else { return };
-        unsafe {
-            sink.BeginFigure(pt(cx, cy), D2D1_FIGURE_BEGIN_FILLED);
-            sink.AddLine(pt(cx + r * a0.cos(), cy + r * a0.sin()));
-            sink.AddArc(&D2D1_ARC_SEGMENT {
-                point: pt(cx + r * a1.cos(), cy + r * a1.sin()),
-                size: D2D_SIZE_F { width: r, height: r },
-                rotationAngle: 0.0,
-                sweepDirection: D2D1_SWEEP_DIRECTION_CLOCKWISE,
-                arcSize: if sweep > 180.0 { D2D1_ARC_SIZE_LARGE } else { D2D1_ARC_SIZE_SMALL },
-            });
-            sink.EndFigure(D2D1_FIGURE_END_CLOSED);
-            let _ = sink.Close();
-            self.rt().FillGeometry(&g, self.set(hex, a), None);
-        }
-    }
-
     pub fn polygon(&self, pts: &[(f32, f32)], hex: u32, a: f32) {
         if pts.len() < 3 {
             return;
@@ -469,10 +439,21 @@ impl Gfx {
 
     /// Restricts drawing to a geometry until `pop_clip`.
     pub fn push_clip(&self, g: &ID2D1PathGeometry1) {
+        self.push_mask(g.cast::<ID2D1Geometry>().ok());
+    }
+
+    /// Restricts drawing to a rounded rectangle until `pop_clip`.
+    pub fn push_clip_rrect(&self, x: f32, y: f32, w: f32, h: f32, r: f32) {
+        let rr = D2D1_ROUNDED_RECT { rect: D2D_RECT_F { left: x, top: y, right: x + w, bottom: y + h }, radiusX: r, radiusY: r };
+        let g = unsafe { self.factory.CreateRoundedRectangleGeometry(&rr) }.ok();
+        self.push_mask(g.and_then(|g| g.cast::<ID2D1Geometry>().ok()));
+    }
+
+    fn push_mask(&self, mask: Option<ID2D1Geometry>) {
         unsafe {
             let mut params = D2D1_LAYER_PARAMETERS1 {
                 contentBounds: D2D_RECT_F { left: -1e6, top: -1e6, right: 1e6, bottom: 1e6 },
-                geometricMask: ManuallyDrop::new(g.cast::<ID2D1Geometry>().ok()),
+                geometricMask: ManuallyDrop::new(mask),
                 maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                 maskTransform: identity(),
                 opacity: 1.0,

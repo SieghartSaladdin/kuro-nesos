@@ -49,8 +49,12 @@
 - **Music.** Works with any player that shows up in the Windows media flyout (Spotify,
   browsers, Apple Music, ...): title, artist, album art, progress with seeking, play/pause,
   next/previous.
+- **Equalizer that follows the beat.** While music plays, 11 thin amber bars mirrored around
+  a centre line (bass in the middle, treble at both ends) move with six frequency bands of
+  what you hear, and jump on every hit. With lyrics off the pill shrinks to just the cover
+  and the equalizer.
 - **Synced lyrics** from [LRCLIB](https://lrclib.net). The collapsed notch grows and shrinks with
-  each line, long lines wrap on the music page.
+  each line, long lines wrap on the music page; instrumental breaks show a note icon.
 - **Romaji / romanization** (toggle with the `Aa` chip or the tray menu), offline:
   Japanese → romaji (kanji included, e.g. あの水平線が遠ざかっていく → *ano suiheisen ga
   toozakatte iku*), Chinese → pinyin, Korean → Revised Romanization, Russian → BGN Latin,
@@ -60,12 +64,17 @@
   hourly chart, "Drank / Refilled / Snooze" right from the notification.
 - **To-do list** with optional time ranges; a "Task Time!" alert when a task starts.
 - **File shelf**: drop files, browser images or links onto the notch, click to open, drag them
-  back out to any app.
+  back out to any app. New screenshots (Win+PrtScn, Snipping Tool) land on the shelf by
+  themselves, with a thumbnail; remove one with its × or everything with *Clear* (the original
+  in Pictures\Screenshots is kept). Turn it off in Settings → *Screenshots to Shelf*.
 - **Alerts**: Caps Lock, charger plugged/unplugged, low battery, Wi-Fi/Ethernet changes,
   Bluetooth devices, keyboard layout, and mirrored Windows notifications.
 - **Kuro the cat**: after 15 s without input the notch turns into a little black neko that
   naps (ears, whiskers, paws over the edge, a swishing tail and drifting "z"s), opens its
   amber eyes and follows your cursor when you come back, then waves hello.
+- **Kuro amber design**: pure black panels with 1px hairlines and a single amber accent (the
+  cat's eyes) for whatever is active; a **Home** page of bento tiles shows music, focus timer,
+  water, to-do and shelf at a glance, and a **Settings** page lives right in the panel.
 - **Smooth everywhere**: spring-animated shape, cross-fading views, and every control eases
   its hover highlight, squeezes a little when clicked, and animates switches and checks.
 - **Polite**: hides while a fullscreen app (game, video) is in front, rebuilds its renderer
@@ -73,9 +82,18 @@
 
 ## Install
 
-Grab `kuro-nesos.exe` from the [Releases](https://github.com/SieghartSaladdin/kuro-nesos/releases)
-page (when available) or build it yourself. It is a single portable executable; run it and the
-notch appears. Right-click the tray icon for options and *Start with Windows*.
+From the [Releases](https://github.com/SieghartSaladdin/kuro-nesos/releases) page pick one:
+
+- **`KuroNesos-<version>-Setup.exe`** – installer. Installs for your user only (no admin
+  rights) into `%LOCALAPPDATA%\Programs\Kuro Nesos`, adds a Start Menu entry, can start Kuro
+  Nesos with Windows, and uninstalls cleanly from *Settings → Apps*.
+- **`KuroNesos-<version>-portable.zip`** – portable. Unzip anywhere (even a USB stick) and run
+  `kuro-nesos.exe`; while `portable.txt` sits next to it, all data stays in a `KuroNesosData`
+  folder beside the exe.
+- **`kuro-nesos.exe`** – the plain single file; data goes to `%APPDATA%\KuroNesos`.
+
+Windows SmartScreen may warn about an unrecognised app because the exe is not code-signed yet;
+choose *More info → Run anyway*.
 
 ### Requirements
 
@@ -97,6 +115,9 @@ notch appears. Right-click the tray icon for options and *Start with Windows*.
    ```
 
    The binary is `target/release/kuro-nesos.exe`.
+3. Optional, the release packages: with [Inno Setup 6](https://jrsoftware.org/isinfo.php)
+   installed, `installer/build.ps1` writes the installer, the portable zip and the exe to
+   `dist/`.
 
 ## Usage
 
@@ -104,7 +125,9 @@ notch appears. Right-click the tray icon for options and *Start with Windows*.
 |---|---|
 | Rest the cursor on the notch (or hold `Ctrl`) | expand it; move away to collapse |
 | Drag the panel header | move the notch along the edge or to the left/right/top edge |
-| `‹` `›`, the dots, or the mouse wheel | switch page (Music, Pomodoro, Water, Shelf, To-do) |
+| `‹` `›`, the dots, or the mouse wheel | switch page (Home, Music, Pomodoro, Water, Shelf, To-do, Settings) |
+| Home tiles | open the music, Pomodoro, water, to-do or shelf page; play/pause right from Home |
+| Settings page | Start with Windows, Kuro the cat, Romaji lyrics, Lyrics, Minimal notch, Screenshots to Shelf, Reset position |
 | Lyrics bubble / `Aa` chip on the music page | lyrics on/off, romaji on/off |
 | Tray icon (right-click) | Start with Windows, Mascot, Minimal notch, Romaji lyrics, Reset position, About, Exit |
 | To-do form | type the title, `Tab` to the time field (`HHMM HHMM`), `Enter` saves, `Esc` cancels |
@@ -114,7 +137,7 @@ notch appears. Right-click the tray icon for options and *Start with Windows*.
 ```
 --demo alerts|lyrics|mascot|all   fake notifications / fake song with lyrics / fast mascot
 --pin                              keep the notch expanded
---page N                           start on page N (0 = Music ... 4 = To-do)
+--page N                           start on page N (0 = Home, 1 = Music ... 5 = To-do, 6 = Settings)
 --test-lyrics "Title|Artist"       fetch lyrics once, write the result to the log, exit
 --test-roman "line|line"           romanize lines, write the result to the log, exit
 --test-media                       log the current media session, exit
@@ -130,6 +153,11 @@ Set `KURO_DEBUG_FPS=1` to log the render frame rate.
   is offline.
 - **Notifications:** mirroring Windows notifications needs your consent (Windows asks once).
   Their text is only shown in the notch, never stored.
+- **Audio:** while music plays, the equalizer reads what your speakers play (WASAPI
+  loopback) and measures only its loudness per frequency band, in memory. Nothing is
+  recorded, stored or sent.
+- **Screenshots:** new files in Pictures\Screenshots are only linked on the shelf, not copied
+  or uploaded.
 - **Local data:** settings, water log and to-do list in `%APPDATA%\KuroNesos`, shelf items and a
   small log in `%LOCALAPPDATA%\KuroNesos`.
 
@@ -143,10 +171,12 @@ Rust with the [`windows`](https://github.com/microsoft/windows-rs) crate, no UI 
 | `src/gfx.rs` | Direct3D 11 → DXGI swap chain → DirectComposition, drawn with Direct2D + DirectWrite |
 | `src/ui/` | notch state machine (`mod.rs`), animations (`anim.rs`), input, painting, pages, vertical layouts, music, alerts, mascot, window helpers |
 | `src/media.rs` | Global System Media Transport Controls (title, art, timeline, commands) |
+| `src/audio.rs` | equalizer levels: WASAPI loopback split into six bands, beat detection |
 | `src/lyrics.rs`, `src/json.rs` | LRCLIB client, LRC parser, minimal JSON reader |
 | `src/roman.rs`, `src/jdict.rs` | romanization (ICU transliterator, Japanese reading analyzer, IPADIC kanji reader, Hangul RR) |
-| `src/sys.rs` | battery, network, Bluetooth, notifications, keyboard layout, fullscreen detection, chime |
-| `src/model.rs`, `src/shelf.rs` | settings, water, to-do, shelf storage and OLE drag & drop |
+| `src/sys.rs` | battery, network, Bluetooth, notifications, screenshots folder, keyboard layout, fullscreen detection, chime |
+| `src/model.rs`, `src/shelf.rs` | settings, water, to-do, shelf storage, OLE drag & drop, portable mode |
+| `installer/` | Inno Setup script, portable marker and `build.ps1` for the release packages |
 
 The logo is drawn by code: `python assets/make_logo.py` (needs Pillow) regenerates
 `assets/logo.png` and the app icon `assets/kuro-nesos.ico`.

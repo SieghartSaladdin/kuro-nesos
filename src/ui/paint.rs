@@ -2,6 +2,12 @@
 
 use super::*;
 
+/// The music equalizer: one bar per band each side of the bass bar in the middle.
+const EQ_BARS: usize = crate::audio::BANDS * 2 - 1;
+const EQ_STEP: f32 = 2.6;
+/// Width of the equalizer strip.
+pub(super) const EQ_W: f32 = (EQ_BARS - 1) as f32 * EQ_STEP + 1.8;
+
 impl App {
     /// Renderer; painting only happens while it exists (see `render`).
     pub(super) fn g(&self) -> &Gfx {
@@ -13,6 +19,7 @@ impl App {
         let Some(t) = self.gfx_lost else { return };
         // the old DirectComposition target must be released before a new one can bind the window
         self.gfx = None;
+        self.thumbs.borrow_mut().clear();
         if t.elapsed() < Duration::from_millis(500) {
             return;
         }
@@ -85,12 +92,26 @@ impl App {
         self.hit(cx - r, cy - r, r * 2.0, r * 2.0, act);
     }
 
+    /// Music indicator: thin bars mirrored around a centre line, bass in the middle and treble
+    /// at both ends, each following its band of what is playing (or a steady loop when the
+    /// output cannot be read). `x` is the left edge of the `EQ_W`-wide strip.
     pub(super) fn eq_bars(&self, x: f32, cy: f32, color: u32) {
         let t = self.started.elapsed().as_secs_f32();
-        for i in 0..4 {
-            let phase = t * (5.0 + i as f32 * 1.3) + i as f32 * 1.7;
-            let h = if self.media.playing { 4.0 + (phase.sin() * 0.5 + 0.5) * 9.0 } else { 3.0 };
-            self.g().fill_rrect(x + i as f32 * 4.2, cy - h / 2.0, 2.6, h, 1.3, color, 1.0);
+        let live = self.beat.live();
+        let mid = EQ_BARS / 2;
+        for i in 0..EQ_BARS {
+            let band = i.abs_diff(mid);
+            let h = if !self.media.playing {
+                2.0
+            } else if live {
+                let kick = if band == 0 { self.beat.pulse * 0.15 } else { 0.0 };
+                // treble at the ends stays a little shorter, so the shape reads from the middle
+                2.0 + (self.beat.bands[band] + kick).min(1.0) * 18.0 * (1.0 - band as f32 * 0.08)
+            } else {
+                let phase = t * (5.0 + band as f32 * 1.3) + band as f32 * 1.7;
+                3.0 + (phase.sin() * 0.5 + 0.5) * 12.0 * (1.0 - band as f32 * 0.12)
+            };
+            self.g().fill_rrect(x + i as f32 * EQ_STEP, cy - h / 2.0, 1.8, h, 0.9, color, 1.0);
         }
     }
 
@@ -178,21 +199,27 @@ impl App {
     pub(super) fn paint_collapsed(&self, x0: f32, w: f32, h: f32) {
         self.origin(x0, self.top.get());
         let (_, time) = date_strings();
-        self.g().text(&time, w / 2.0, h / 2.0, 14.5, 700, Align::Center, WHITE, 1.0, w);
+        let tw = self.g().measure(&time, 14.5, 700);
+        self.clock(w / 2.0 + tw / 2.0, h / 2.0, 14.5, WHITE);
     }
 
     pub(super) fn paint_live(&self, x0: f32, w: f32, lyric: bool) {
         self.origin(x0, self.top.get());
         let g = self.g();
         self.art(9.0, 5.0, 20.0, 6.0);
-        self.eq_bars(w - 26.0, 15.0, if lyric { CYAN } else { GREEN });
+        self.eq_bars(w - 12.0 - EQ_W, 15.0, AMBER);
         if lyric {
             let text = self.lyric_text();
             let t = (self.lyric_change.elapsed().as_secs_f32() / 0.25).min(1.0);
-            let shown = if text.is_empty() { "♪".to_string() } else { text };
-            let size = fit_size(g, &shown, w - 88.0, 13.0, 10.5, 600);
+            let y = 15.0 + (1.0 - ease(t)) * 6.0;
             g.alpha.set(g.alpha.get() * ease(t));
-            g.text(&shown, w / 2.0, 15.0 + (1.0 - ease(t)) * 6.0, size, 600, Align::Center, WHITE, 1.0, w - 88.0);
+            if text.is_empty() {
+                // instrumental break: a note icon as big as the lyric line
+                g.icon(glyph::MUSIC, w / 2.0, y, 15.0, WHITE, 1.0);
+            } else {
+                let size = fit_size(g, &text, w - 112.0, 13.0, 10.5, 600);
+                g.text(&text, w / 2.0, y, size, 600, Align::Center, WHITE, 1.0, w - 112.0);
+            }
             g.alpha.set(ease(self.content_a));
         }
     }
@@ -202,8 +229,8 @@ impl App {
         let g = self.g();
         let total = self.pomo.mode.secs();
         let frac = (self.pomo.remaining / total) as f32;
-        let color = if self.pomo.mode == PMode::Focus { RED } else { GREEN };
-        g.stroke_circle(17.0, 15.0, 7.5, 0x3A1A1A, 1.0, 2.4);
+        let color = self.pomo_color();
+        g.stroke_circle(17.0, 15.0, 7.5, 0x2A2416, 1.0, 2.4);
         g.arc(17.0, 15.0, 7.5, -90.0, 360.0 * frac, color, 1.0, 2.4);
         g.text(if self.pomo.mode == PMode::Focus { "Focus" } else { "Break" }, 32.0, 15.0, 12.0, 600, Align::Left, GREY, 1.0, 80.0);
         g.text(&mmss(self.pomo.remaining), w - 14.0, 15.0, 14.5, 700, Align::Right, color, 1.0, 80.0);

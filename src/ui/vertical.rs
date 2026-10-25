@@ -2,6 +2,7 @@
 //! a narrow tab at rest, tall cards for live content and a 240 x 440 panel on hover.
 
 use super::*;
+use super::paint::EQ_W;
 
 const PW: f32 = 240.0; // expanded panel width
 const PAD: f32 = 18.0;
@@ -15,7 +16,7 @@ impl App {
     /// Visible rows in the to-do list.
     pub(super) fn todo_rows(&self) -> usize {
         if self.vertical() {
-            7
+            9
         } else {
             3
         }
@@ -58,7 +59,7 @@ impl App {
     pub(super) fn paint_live_v(&self, x0: f32, w: f32, h: f32) {
         self.origin(x0, self.top.get());
         self.art(w / 2.0 - 15.0, 14.0, 30.0, 8.0);
-        self.eq_bars(w / 2.0 - 7.6, h - 26.0, GREEN);
+        self.eq_bars((w - EQ_W) / 2.0, h - 26.0, AMBER);
     }
 
     pub(super) fn paint_timer_v(&self, x0: f32, w: f32) {
@@ -66,9 +67,9 @@ impl App {
         let g = self.g();
         let frac = (self.pomo.remaining / self.pomo.mode.secs()) as f32;
         let focus = self.pomo.mode == PMode::Focus;
-        let color = if focus { RED } else { GREEN };
+        let color = self.pomo_color();
         let c = w / 2.0;
-        g.stroke_circle(c, 32.0, 14.0, 0x3A1A1A, 1.0, 3.0);
+        g.stroke_circle(c, 32.0, 14.0, 0x2A2416, 1.0, 3.0);
         g.arc(c, 32.0, 14.0, -90.0, 360.0 * frac, color, 1.0, 3.0);
         g.text(if focus { "Focus" } else { "Break" }, c, 62.0, 10.0, 600, Align::Center, GREY, 1.0, w);
         let s = self.pomo.remaining.max(0.0) as u64;
@@ -80,13 +81,17 @@ impl App {
         self.origin(x0, self.top.get());
         let g = self.g();
         self.art(10.0, 10.0, 22.0, 6.0);
-        self.eq_bars(w - 26.0, 21.0, CYAN);
+        self.eq_bars(w - 12.0 - EQ_W, 21.0, AMBER);
         let text = self.lyric_text();
-        let shown = if text.is_empty() { "♪".to_string() } else { text };
         let t = ease(self.lyric_change.elapsed().as_secs_f32() / 0.25);
         let a = g.alpha.get();
         g.alpha.set(a * t);
-        g.text_box(&shown, 10.0, 42.0 + (1.0 - t) * 5.0, w - 20.0, h - 50.0, 12.5, 600, WHITE, 1.0);
+        let y = 42.0 + (1.0 - t) * 5.0;
+        if text.is_empty() {
+            g.icon(glyph::MUSIC, 18.0, y + 9.0, 15.0, WHITE, 1.0);
+        } else {
+            g.text_box(&text, 10.0, y, w - 20.0, h - 50.0, 12.5, 600, WHITE, 1.0);
+        }
         g.alpha.set(a);
     }
 
@@ -95,31 +100,24 @@ impl App {
         self.origin(x0, self.top.get());
         let g = self.g();
         if !a.big() {
-            self.alert_icon(a.icon, w / 2.0, 22.0, 10.0);
-            g.text(&a.title, w / 2.0, 45.0, 12.5, 600, Align::Center, WHITE, 1.0, w - 16.0);
-            g.text(&a.value, w / 2.0, 62.0, 11.5, 400, Align::Center, a.color, 1.0, w - 16.0);
+            self.alert_badge(a, w / 2.0, 24.0, 13.0);
+            g.text(&a.title, w / 2.0, 48.0, 12.5, 600, Align::Center, WHITE, 1.0, w - 16.0);
+            g.text(&a.value, w / 2.0, 64.0, 11.5, 400, Align::Center, a.color, 1.0, w - 16.0);
             return;
         }
-        g.glow(24.0, 24.0, 20.0, 20.0, a.color, 0.18);
-        g.fill_circle(24.0, 24.0, 13.0, a.color, 0.16);
-        self.alert_icon(a.icon, 24.0, 24.0, 10.0);
-        g.text(&a.title, 44.0, 24.0, 13.0, 700, Align::Left, WHITE, 1.0, w - 54.0);
-        let body_h = if a.actions.is_empty() { h - 62.0 } else { h - 92.0 };
-        g.text_box(&a.value, 12.0, 44.0, w - 24.0, body_h.max(14.0), 11.5, 400, GREY, 1.0);
+        self.alert_badge(a, 28.0, 28.0, 15.0);
+        g.text(&a.title, 50.0, 24.0, 13.0, 700, Align::Left, WHITE, 1.0, w - 60.0);
+        g.text("now", 50.0, 38.0, 10.0, 400, Align::Left, DIM, 1.0, 40.0);
+        let body_h = if a.actions.is_empty() { h - 66.0 } else { h - 96.0 };
+        g.text_box(&a.value, 12.0, 50.0, w - 24.0, body_h.max(14.0), 11.5, 400, 0xB8B8B8, 1.0);
         if !a.actions.is_empty() {
             let n = a.actions.len() as f32;
-            let bw = (w - 24.0 - (n - 1.0) * 8.0) / n;
+            let bw = (w - 24.0 - (n - 1.0) * 6.0) / n;
             for (i, (label, _)) in a.actions.iter().enumerate() {
-                let bx = 12.0 + i as f32 * (bw + 8.0);
-                let primary = i == 0;
-                self.button(bx, h - 40.0, bw, 24.0, 12.0, if primary { a.color } else { 0x262626 }, if primary { 0.95 } else { 1.0 }, Act::Alert(i));
-                g.text(label, bx + bw / 2.0, h - 28.0, 12.0, 600, Align::Center, if primary { 0x08121C } else { WHITE }, 1.0, bw);
+                self.alert_button(a, i, label, 12.0 + i as f32 * (bw + 6.0), h - 40.0, bw);
             }
         }
-        if let Some(b) = a.born {
-            let f = 1.0 - (b.elapsed().as_secs_f32() / a.ttl.as_secs_f32()).min(1.0);
-            g.fill_rrect(12.0, h - 10.0, (w - 24.0) * f, 2.0, 1.0, if a.color == WHITE { GREY } else { a.color }, 0.5);
-        }
+        self.alert_timer(a, 14.0, h - 9.0, w - 28.0);
     }
 
     // ------------------------------------------------------------ expanded panel
@@ -143,8 +141,8 @@ impl App {
         let travel = (pos - pos.round()).abs();
         let iw = 12.0 + travel * 10.0;
         let ix = first + gap * pos;
-        g.glow(ix, cy, 13.0, 6.0, WHITE, 0.12);
-        g.fill_rrect(ix - iw / 2.0, cy - 2.5, iw, 5.0, 2.5, WHITE, 1.0);
+        g.glow(ix, cy, 13.0, 6.0, AMBER, 0.14);
+        g.fill_rrect(ix - iw / 2.0, cy - 2.5, iw, 5.0, 2.5, AMBER, 1.0);
     }
 
     pub(super) fn paint_expanded_v(&self, x0: f32) {
@@ -155,10 +153,12 @@ impl App {
         let top = self.top.get();
         self.origin(x0, top);
         self.grab_strip(PW);
-        self.header_v();
+        self.header(PW, 22.0, 12.0);
         g.alpha.set(base_a * (1.0 - (slide.abs() / 36.0) * 0.7));
         self.origin(x0 + slide * 0.6, top);
         match page {
+            Page::Home => self.page_home_v(),
+            Page::Settings => self.page_settings_v(),
             Page::Media => self.page_media_v(),
             Page::Pomodoro => self.page_pomodoro_v(),
             Page::Water if self.water_settings => self.page_water_settings_v(),
@@ -168,46 +168,12 @@ impl App {
         }
         g.alpha.set(base_a);
         self.origin(x0, top);
-        let ny = 418.0;
-        if !(page == Page::Water && self.water_settings) {
-            self.round_button(26.0, ny, 10.0, 0x3C3C3C, glyph::CHEV_L, 10.0, WHITE, Act::PagePrev);
-            self.round_button(PW - 26.0, ny, 10.0, 0x3C3C3C, glyph::CHEV_R, 10.0, WHITE, Act::PageNext);
-        }
-        self.page_dots(PW / 2.0, ny);
-    }
-
-    fn header_v(&self) {
-        let g = self.g();
-        let (date, time) = date_strings();
-        let dw = g.measure(&date, 12.0, 400);
-        let tw = g.measure(&time, 12.5, 700);
-        let left = PW / 2.0 - (dw + 7.0 + tw) / 2.0;
-        g.text(&date, left, 20.0, 12.0, 400, Align::Left, 0xD0D0D0, 1.0, dw + 4.0);
-        g.text(&time, left + dw + 7.0, 20.0, 12.5, 700, Align::Left, WHITE, 1.0, tw + 4.0);
-        let page = PAGES[self.page];
-        let title: &[(&str, u32)] = match page {
-            Page::Media => &[],
-            Page::Pomodoro => &[("Pomodoro", WHITE)],
-            Page::Water if self.water_settings => &[],
-            Page::Water => &[("Water ", WHITE), ("Reminder", BLUE)],
-            Page::Shelf => &[("Shelf", WHITE)],
-            Page::Todo => &[("Todo", WHITE), ("List", GREEN)],
-        };
-        let mut x = PAD;
-        for (s, c) in title {
-            g.text(s, x, 46.0, 14.5, 600, Align::Left, *c, 1.0, 140.0);
-            x += g.measure(s, 14.5, 600);
-        }
-        if self.pomo.running && page != Page::Pomodoro {
-            let frac = (self.pomo.remaining / self.pomo.mode.secs()) as f32;
-            g.fill_circle(PW - 26.0, 46.0, 8.0, 0x3A1414, 1.0);
-            g.pie(PW - 26.0, 46.0, 8.0, -90.0, 360.0 * frac, RED, 0.9);
-        }
+        self.page_nav(PW / 2.0, 418.0, !(page == Page::Water && self.water_settings));
     }
 
     /// (main line, secondary line) for the current lyric: romaji + original script when
     /// romaji is on and available, otherwise the line and the next one.
-    fn lyric_pair(&self) -> Option<(String, String)> {
+    pub(super) fn lyric_pair(&self) -> Option<(String, String)> {
         let i = self.lyric_idx?;
         let l = self.lyrics.lock().unwrap();
         let line = l.lines.get(i)?;
@@ -224,7 +190,8 @@ impl App {
     fn page_media_v(&self) {
         let g = self.g();
         let m = &self.media;
-        self.art(64.0, 56.0, 112.0, 14.0);
+        let s = 112.0 * (1.0 + self.cover_bump());
+        self.art(120.0 - s / 2.0, 112.0 - s / 2.0, s, 14.0);
         let has = m.has_session && !m.title.is_empty();
         let lyric_on = self.settings.lyrics && has;
         let status = self.lyrics.lock().unwrap().status.clone();
@@ -238,8 +205,12 @@ impl App {
                 let t = ease(self.lyric_change.elapsed().as_secs_f32() / 0.3);
                 let a = g.alpha.get();
                 g.alpha.set(a * t);
-                let cur = if cur.is_empty() { "♪".to_string() } else { cur };
-                g.text_box(&cur, PAD, 222.0 + (1.0 - t) * 5.0, CW, 48.0, 14.5, 700, WHITE, 1.0);
+                let y = 222.0 + (1.0 - t) * 5.0;
+                if cur.is_empty() {
+                    g.icon(glyph::MUSIC, PAD + 9.0, y + 11.0, 18.0, WHITE, 1.0);
+                } else {
+                    g.text_box(&cur, PAD, y, CW, 48.0, 14.5, 700, WHITE, 1.0);
+                }
                 g.text_box(&sub, PAD, 272.0, CW, 28.0, 11.5, 400, DIM, 1.0);
                 g.alpha.set(a);
             }
@@ -261,7 +232,7 @@ impl App {
         g.fill_rrect(PAD, 314.0, CW, 3.0, 1.5, 0x1F1F1F, 1.0);
         if m.duration > 0.0 {
             let f = (pos / m.duration).clamp(0.0, 1.0) as f32;
-            g.fill_rrect(PAD, 314.0, (CW * f).max(3.0), 3.0, 1.5, 0xD8D8D8, 1.0);
+            g.fill_rrect(PAD, 314.0, (CW * f).max(3.0), 3.0, 1.5, AMBER, 1.0);
             let k = self.hov(Act::MediaSeek);
             if k > 0.0 {
                 g.fill_circle(PAD + CW * f, 315.5, 4.5 * k, WHITE, k);
@@ -277,7 +248,7 @@ impl App {
         let lyr = self.settings.lyrics && has;
         g.icon(glyph::MESSAGE, 30.0, cy, 15.0, if lyr { WHITE } else { 0x7A7A7A }, 1.0);
         if lyr {
-            g.fill_circle(40.0, cy - 7.5, 2.4, GREEN, 1.0);
+            g.fill_circle(40.0, cy - 7.5, 2.4, AMBER, 1.0);
         }
         self.hit(17.0, cy - 12.0, 26.0, 24.0, Act::Lyrics);
         let ron = self.settings.romaji;
@@ -285,9 +256,9 @@ impl App {
         if rk > 0.0 {
             g.fill_rrect(51.0, cy - 9.0, 26.0, 18.0, 9.0, 0x262626, rk);
         }
-        g.text("Aa", 64.0, cy, 10.5, 700, Align::Center, if ron { WHITE } else { 0x7A7A7A }, 1.0, 26.0);
+        g.text("Aa", 64.0, cy, 10.5, 700, Align::Center, if ron { AMBER } else { 0x7A7A7A }, 1.0, 26.0);
         if ron {
-            g.fill_circle(75.0, cy - 7.5, 2.4, GREEN, 1.0);
+            g.fill_circle(75.0, cy - 7.5, 2.4, AMBER, 1.0);
         }
         self.hit(49.0, cy - 12.0, 30.0, 24.0, Act::Romaji);
         let tri = |cx: f32, dir: f32, s: f32| vec![(cx - dir * s * 0.55, cy - s * 0.6), (cx - dir * s * 0.55, cy + s * 0.6), (cx + dir * s * 0.65, cy)];
@@ -298,142 +269,36 @@ impl App {
             self.hit(cx - 14.0, cy - 13.0, 28.0, 26.0, act);
         }
         let pc = 160.0;
-        self.hover_ring(Act::MediaPlay, pc, cy, 15.0, 0.08);
-        let pl = self.fx.level(Act::MediaPlay, m.playing as u8 as f32);
-        if pl > 0.0 {
-            g.fill_rrect(pc - 7.0, cy - 8.5 + (1.0 - pl) * 3.0, 4.6, 17.0 - (1.0 - pl) * 6.0, 1.5, fg, pl);
-            g.fill_rrect(pc + 2.4, cy - 8.5 + (1.0 - pl) * 3.0, 4.6, 17.0 - (1.0 - pl) * 6.0, 1.5, fg, pl);
-        }
-        if pl < 1.0 {
-            g.polygon(&[(pc - 6.0, cy - 9.5), (pc - 6.0, cy + 9.5), (pc + 9.5, cy)], fg, 1.0 - pl);
-        }
-        self.hit(pc - 15.0, cy - 14.0, 30.0, 28.0, Act::MediaPlay);
+        self.play_button(pc, cy, 15.0, has);
     }
 
     fn page_pomodoro_v(&self) {
-        let g = self.g();
-        let p = &self.pomo;
-        let frac = (p.remaining / p.mode.secs()).clamp(0.0, 1.0) as f32;
-        let focus = p.mode == PMode::Focus;
-        let color = if focus { RED } else { GREEN };
-        let (cx, cy) = (PW / 2.0, 140.0);
-        g.glow(cx, cy, 78.0, 78.0, color, 0.26);
-        g.stroke_circle(cx, cy, 54.0, color, 0.22, 8.0);
-        g.arc(cx, cy, 54.0, -90.0, 360.0 * frac, color, 1.0, 8.0);
-        g.icon(glyph::STOPWATCH, cx, cy, 44.0, WHITE, 1.0);
-        g.text(&mmss(p.remaining.ceil()), cx, 238.0, 34.0, 700, Align::Center, WHITE, 1.0, 170.0);
-        self.round_button(PW - 30.0, 238.0, 12.5, 0x262626, glyph::REFRESH, 12.0, WHITE, Act::PomoReset);
-        g.text(p.mode.label(), cx, 268.0, 12.0, 400, Align::Center, GREY, 1.0, 170.0);
-        self.button(cx - 40.0, 288.0, 80.0, 30.0, 15.0, color, 1.0, Act::PomoToggle);
-        if p.running {
-            g.fill_rrect(cx - 6.0, 296.0, 3.4, 14.0, 1.2, WHITE, 1.0);
-            g.fill_rrect(cx + 2.6, 296.0, 3.4, 14.0, 1.2, WHITE, 1.0);
-        } else {
-            g.polygon(&[(cx - 4.5, 296.0), (cx - 4.5, 310.0), (cx + 7.5, 303.0)], WHITE, 1.0);
-        }
-        let half = (CW - 8.0) / 2.0;
-        self.button(PAD, 330.0, half, 28.0, 14.0, if focus { 0x171717 } else { 0x333333 }, 1.0, Act::PomoShort);
-        g.icon(glyph::CAFE, PAD + 16.0, 344.0, 11.0, WHITE, 1.0);
-        g.text("Short Break", PAD + 26.0, 344.0, 10.5, 400, Align::Left, WHITE, 1.0, half - 30.0);
-        let fx = PAD + half + 8.0;
-        self.button(fx, 330.0, half, 28.0, 14.0, if focus { 0x333333 } else { 0x171717 }, 1.0, Act::PomoFocus);
-        g.icon(glyph::TARGET, fx + 16.0, 344.0, 11.0, WHITE, 1.0);
-        g.text("Focus Time", fx + 26.0, 344.0, 10.5, 400, Align::Left, WHITE, 1.0, half - 30.0);
+        self.mode_chips(PW / 2.0, 66.0, true);
+        self.big_timer(PW / 2.0, 142.0, 54.0, true);
+        self.pomo_bar(PAD, 190.0, CW);
+        self.g().text(&self.pomo_label(), PW / 2.0, 206.0, 11.0, 400, Align::Center, GREY, 1.0, CW);
+        self.round_button(PW / 2.0 - 72.0, 272.0, 17.0, 0x222222, glyph::REFRESH, 14.0, WHITE, Act::PomoReset);
+        self.pomo_play(PW / 2.0, 272.0, 30.0);
     }
 
     fn page_water_v(&self) {
         let g = self.g();
         let w = &self.water;
+        self.water_bottle(PAD + 6.0, 52.0, 66.0, 150.0);
+        let x = PAD + 92.0;
         let litres = format!("{:.1}", w.taken as f32 / 1000.0);
-        g.text(&litres, PAD, 84.0, 30.0, 700, Align::Left, WHITE, 1.0, 120.0);
-        let lw = g.measure(&litres, 30.0, 700);
-        g.text(&format!("/ {:.1} L", w.goal as f32 / 1000.0), PAD + lw + 6.0, 88.0, 13.5, 400, Align::Left, GREY, 1.0, 80.0);
-        let on = w.on;
-        let k = self.fx.level(Act::WaterOn, on as u8 as f32);
-        self.button(PW - PAD - 34.0, 75.0, 34.0, 18.0, 9.0, 0x3A3A3A, 1.0, Act::WaterOn);
-        g.fill_rrect(PW - PAD - 34.0, 75.0, 34.0, 18.0, 9.0, 0x2699FF, k);
-        let kx = PW - PAD - 25.0 + 16.0 * k;
-        g.fill_circle(kx, 84.0, 7.2, WHITE, 1.0);
-        g.icon(glyph::BELL, kx, 84.0, 8.5, if k > 0.5 { 0x2699FF } else { GREY }, 1.0);
-
-        let pct = format!("{}%", w.percent());
-        let tail = if !w.on {
-            " · Reminders off".to_string()
-        } else if w.taken >= w.goal {
-            " · Goal reached".to_string()
-        } else if let Some(n) = w.next_time() {
-            format!(" · Next {}", model::hhmm(n))
-        } else {
-            " · Done for today".to_string()
-        };
-        let mut x = PAD;
-        for (s, c, wt) in [("Today · ", GREY, 400), (pct.as_str(), BLUE, 700), (tail.as_str(), GREY, 400)] {
-            g.text(s, x, 112.0, 12.0, wt, Align::Left, c, 1.0, CW);
-            x += g.measure(s, 12.0, wt);
-        }
-        g.fill_rrect(PAD, 126.0, CW, 4.0, 2.0, 0x212121, 1.0);
-        let f = (w.taken as f32 / w.goal.max(1) as f32).min(1.0);
-        if f > 0.0 {
-            g.fill_rrect(PAD, 126.0, (CW * f).max(4.0), 4.0, 2.0, BLUE, 1.0);
-        }
-
-        for (i, x) in [(0u8, PW / 2.0 - 5.0), (1u8, PW / 2.0 + 5.0)] {
-            g.fill_circle(x, 150.0, 2.0, if self.water_sub == i { WHITE } else { DIM }, 1.0);
-            self.hit(x - 4.0, 144.0, 8.0, 12.0, Act::WaterSub(i));
-        }
-        if self.water_sub == 0 {
-            let (cx, cy, r) = (PW / 2.0, 230.0, 56.0);
-            g.arc(cx, cy, r, 135.0, 270.0, 0x0F2640, 1.0, 8.0);
-            if f > 0.0 {
-                g.arc(cx, cy, r, 135.0, 270.0 * f, BLUE, 1.0, 8.0);
-            }
-            let a = (135.0 + 270.0 * f).to_radians();
-            g.fill_circle(cx + r * a.cos(), cy + r * a.sin(), 5.0, BLUE, 1.0);
-            g.text(&w.percent().to_string(), cx, cy - 8.0, 30.0, 700, Align::Center, WHITE, 1.0, 90.0);
-            g.icon(glyph::DROP, cx - 7.0, cy + 18.0, 11.0, BLUE, 1.0);
-            g.text("%", cx + 2.0, cy + 18.0, 12.5, 600, Align::Left, GREY, 1.0, 20.0);
-            self.hit(cx - r, cy - r, r * 2.0, r * 2.0, Act::WaterSub(1));
-        } else {
-            self.water_chart_v();
-        }
-        let half = (CW - 8.0) / 2.0;
-        self.button(PAD, 330.0, half, 28.0, 14.0, 0x0D4580, 1.0, Act::WaterDrink);
-        g.icon(glyph::DROP, PAD + 22.0, 344.0, 12.0, CYAN, 1.0);
-        g.text("Drink", PAD + 34.0, 344.0, 12.0, 400, Align::Left, WHITE, 1.0, 60.0);
-        let sx = PAD + half + 8.0;
-        self.button(sx, 330.0, half, 28.0, 14.0, 0x1F1F1F, 1.0, Act::WaterSettings);
-        g.icon(glyph::SLIDERS, sx + 18.0, 344.0, 11.0, WHITE, 1.0);
-        g.text("Settings", sx + 30.0, 344.0, 11.0, 400, Align::Left, WHITE, 1.0, 60.0);
-    }
-
-    fn water_chart_v(&self) {
-        let g = self.g();
-        let w = &self.water;
-        let first = (w.start / 60) as usize;
-        let last = ((w.end + 59) / 60).min(24) as usize;
-        let n = last.saturating_sub(first).max(1);
-        let (left, right, top, bottom) = (PAD, PW - 46.0, 170.0, 290.0);
-        let maxv = w.hours[first..last.max(first)].iter().copied().max().unwrap_or(0).max(w.bottle).max(1) as f32;
-        for (frac, label) in [(1.0, format!("{}", maxv as u32)), (0.5, format!("{}", (maxv / 2.0) as u32)), (0.0, "0 ml".to_string())] {
-            let y = bottom - (bottom - top) * frac;
-            g.dashed_line(left, y, right, y, 0x2A2A2A, 1.0, 1.0);
-            g.text(&label, right + 5.0, y, 9.5, 400, Align::Left, GREY, 1.0, 40.0);
-        }
-        let slot = (right - left) / n as f32;
-        let bw = (slot * 0.6).min(9.0);
-        for i in 0..n {
-            let x = left + slot * i as f32 + (slot - bw) / 2.0;
-            g.fill_rrect(x, top, bw, bottom - top, bw / 2.0, 0x161616, 1.0);
-            let v = w.hours[(first + i).min(23)] as f32 / maxv;
-            if v > 0.0 {
-                let hh = ((bottom - top) * v).max(bw);
-                g.fill_rrect(x, bottom - hh, bw, hh, bw / 2.0, BLUE, 1.0);
-            }
-            if (first + i) % 3 == 0 {
-                g.text(&format!("{:02}", first + i), x + bw / 2.0, 304.0, 10.0, 400, Align::Center, GREY, 1.0, 30.0);
-            }
-        }
-        self.hit(left, top, right - left, bottom - top, Act::WaterSub(0));
+        g.text(&litres, x, 78.0, 28.0, 700, Align::Left, WHITE, 1.0, CW - 92.0);
+        g.text(&format!("of {:.1} L", w.goal as f32 / 1000.0), x, 101.0, 12.0, 400, Align::Left, GREY, 1.0, CW - 92.0);
+        g.text_box(&self.water_status(), x, 112.0, CW - 92.0, 30.0, 10.5, 400, GREY, 1.0);
+        self.button(x, 146.0, CW - 92.0, 24.0, 12.0, 0x123A63, 1.0, Act::WaterDrink);
+        g.icon(glyph::DROP, x + 16.0, 158.0, 11.0, CYAN, 1.0);
+        g.text("Drink", x + 27.0, 158.0, 11.5, 400, Align::Left, WHITE, 1.0, 60.0);
+        self.round_button(x + 12.0, 190.0, 12.0, 0x1F1F1F, glyph::SLIDERS, 10.0, WHITE, Act::WaterSettings);
+        self.switch(x + 32.0, 190.0, w.on, Act::WaterOn);
+        self.hit(x + 30.0, 180.0, 34.0, 20.0, Act::WaterOn);
+        g.line(PAD, 220.0, PAD + CW, 220.0, HAIR, 1.0, 1.0);
+        g.text("Today", PAD, 236.0, 11.0, 400, Align::Left, GREY, 1.0, 100.0);
+        self.water_chart(PAD, PAD + CW, 254.0, 340.0);
     }
 
     fn page_water_settings_v(&self) {
@@ -486,153 +351,43 @@ impl App {
     }
 
     fn page_shelf_v(&self) {
-        let g = self.g();
-        let items = &self.shelf.items;
-        if items.is_empty() || self.shelf_drag {
-            let accent = if self.shelf_drag { BLUE } else { 0x5A5A5A };
-            if self.shelf_drag {
-                g.fill_rrect(PAD, 66.0, CW, 324.0, 14.0, BLUE, 0.08);
-            }
-            g.stroke_rrect(PAD, 66.0, CW, 324.0, 14.0, accent, 1.0, 1.3, true);
-            let bob = if self.shelf_drag { (self.started.elapsed().as_secs_f32() * 6.0).sin() * 2.0 } else { 0.0 };
-            let ic = if self.shelf_drag { BLUE } else { WHITE };
-            g.icon(glyph::DOWNLOAD, PW / 2.0, 200.0 + bob, 26.0, ic, 1.0);
-            g.fill_rrect(PW / 2.0 - 15.0, 215.0, 30.0, 3.0, 1.5, ic, 0.9);
-            g.text(if self.shelf_drag { "Release to add" } else { "Drop files here" }, PW / 2.0, 246.0, 13.5, 400, Align::Center, WHITE, 1.0, CW);
-            g.text_box("Drag out anytime · click to open", PAD + 20.0, 262.0, CW - 40.0, 30.0, 10.0, 400, GREY, 1.0);
+        self.shelf_header(12.0, 22.0);
+        let n = self.shelf.items.len();
+        if n == 0 {
+            self.drop_card(PAD, 52.0, CW, 150.0, 0);
             return;
         }
-        self.button(PW - PAD - 44.0, 37.0, 44.0, 18.0, 9.0, 0x1F1F1F, 1.0, Act::ShelfClear);
-        g.text("Clear", PW - PAD - 22.0, 46.0, 11.0, 400, Align::Center, WHITE, 1.0, 44.0);
-        let (tw, th, gap) = (64.0, 86.0, 6.0);
-        for (i, it) in items.iter().enumerate().take(9) {
-            let x = PAD + (i % 3) as f32 * (tw + gap);
-            let y = 68.0 + (i / 3) as f32 * (th + 8.0);
-            let act = Act::ShelfItem(i);
-            g.fill_rrect(x, y, tw, th, 10.0, 0x161616, 1.0);
-            let k = self.hov(act);
-            if k > 0.0 {
-                g.fill_rrect(x, y, tw, th, 10.0, WHITE, 0.07 * k);
-            }
-            let (gl, c) = match it.kind {
-                Kind::Folder => (glyph::FOLDER, 0xFFC94A),
-                Kind::Link => (glyph::LINK, BLUE),
-                Kind::Image => (glyph::PICTURE, 0xFF7AB6),
-                Kind::File => (glyph::DOC, 0xCFCFCF),
-            };
-            g.icon(gl, x + tw / 2.0, y + 28.0, 22.0, c, 1.0);
-            g.text(&it.name, x + tw / 2.0, y + 58.0, 10.0, 400, Align::Center, 0xD8D8D8, 1.0, tw - 6.0);
-            let sub = if it.kind == Kind::Folder || it.kind == Kind::Link { String::new() } else { shelf::size_label(it.size) };
-            g.text(&sub, x + tw / 2.0, y + 72.0, 9.0, 400, Align::Center, DIM, 1.0, tw - 6.0);
-            self.hit(x, y, tw, th, act);
+        let gap = 8.0;
+        let (cw, ch) = ((CW - 2.0 * gap) / 3.0, 84.0);
+        let at = |i: usize| (PAD + (i % 3) as f32 * (cw + gap), 50.0 + (i / 3) as f32 * (ch + gap));
+        let order = self.shelf_order(8);
+        let shown = order.len();
+        for (k, &i) in order.iter().enumerate() {
+            let (x, y) = at(k);
+            self.shelf_card(i, x, y, cw, ch);
         }
-        if items.len() > 9 {
-            g.text(&format!("+{}", items.len() - 9), PW - PAD, 392.0, 10.0, 400, Align::Right, GREY, 1.0, 40.0);
-        }
+        let (x, y) = at(shown);
+        self.drop_card(x, y, cw, ch, n - shown);
     }
 
     fn page_todo_v(&self) {
-        let g = self.g();
         let done = self.tasks.iter().filter(|t| t.done).count();
-        g.text(&format!("{}/{}", done, self.tasks.len()), PAD, 84.0, 32.0, 700, Align::Left, WHITE, 1.0, 150.0);
-        g.text("Task Done Today", PAD, 112.0, 12.0, 400, Align::Left, GREY, 1.0, 150.0);
-
-        let half = (CW - 8.0) / 2.0;
-        let adding = self.form.as_ref().map_or(false, |f| f.edit.is_none());
-        self.button(PAD, 128.0, half, 26.0, 13.0, if adding { 0x0F2B17 } else { 0x262626 }, 1.0, Act::TodoAdd);
-        g.icon(glyph::ADD_CIRCLE, PAD + 15.0, 141.0, 12.0, if adding { GREEN } else { WHITE }, 1.0);
-        g.text("Add Task", PAD + 26.0, 141.0, 10.5, 400, Align::Left, if adding { GREEN } else { WHITE }, 1.0, half - 28.0);
-        let ex = PAD + half + 8.0;
-        let can_edit = self.task_sel.is_some() && self.form.is_none();
-        if can_edit {
-            self.button(ex, 128.0, half, 26.0, 13.0, 0x262626, 1.0, Act::TodoEdit);
-        } else {
-            g.fill_rrect(ex, 128.0, half, 26.0, 13.0, 0x121212, 1.0);
+        if !self.tasks.is_empty() {
+            self.header_note("To-do", &format!("{} of {} done", done, self.tasks.len()), 12.0, 22.0);
         }
-        let ec = if can_edit { WHITE } else { 0x4A4A4A };
-        g.icon(glyph::EDIT, ex + 15.0, 141.0, 11.0, ec, 1.0);
-        g.text("Edit Task", ex + 26.0, 141.0, 10.5, 400, Align::Left, ec, 1.0, half - 28.0);
-
-        let (cx0, cy0, cw, ch) = (PAD, 166.0, CW, 232.0);
-        g.fill_rrect(cx0, cy0, cw, ch, 14.0, 0x131313, 1.0);
+        self.plus_button(PW - 64.0, 22.0);
         if let Some(f) = &self.form {
-            self.todo_form_v(f, cx0, cy0, cw);
+            self.todo_form(f, PAD, 54.0, CW, true);
             return;
         }
         if self.tasks.is_empty() {
-            g.fill_rrect(PW / 2.0 - 18.0, 230.0, 36.0, 36.0, 9.0, 0x414141, 1.0);
-            g.icon(glyph::CHECKLIST, PW / 2.0, 248.0, 18.0, 0x1A1A1A, 1.0);
-            g.text("No tasks.", PW / 2.0, 290.0, 13.0, 400, Align::Center, 0x7A7A7A, 1.0, CW);
+            self.todo_empty(PW / 2.0, 190.0);
             return;
         }
         let rows = self.todo_rows();
         for (row, i) in (self.task_scroll..self.tasks.len()).take(rows).enumerate() {
-            let t = &self.tasks[i];
-            let y = cy0 + 8.0 + row as f32 * 31.0;
-            let (rx, rw) = (cx0 + 6.0, cw - 12.0);
-            let k = self.fx.level(Act::TodoRow(i), (self.task_sel == Some(i)) as u8 as f32).max(self.hov(Act::TodoRow(i)));
-            if k > 0.0 {
-                g.fill_rrect(rx, y, rw, 28.0, 8.0, 0x1F1F1F, k);
-            }
-            self.hit(rx + 22.0, y, rw - 22.0, 28.0, Act::TodoRow(i));
-            self.check_mark(i, t.done, rx + 12.0, y + 14.0);
-            self.hit(rx, y, 22.0, 28.0, Act::TodoCheck(i));
-            let title_w = rw - 30.0;
-            g.text(&t.title, rx + 25.0, y + 10.0, 12.0, 400, Align::Left, if t.done { DIM } else { WHITE }, 1.0, title_w);
-            let time = match (t.start, t.end) {
-                (Some(s), Some(e)) => format!("{}–{}", model::hhmm(s), model::hhmm(e)),
-                (Some(s), None) => model::hhmm(s),
-                _ => String::new(),
-            };
-            if !time.is_empty() {
-                g.text(&time, rx + 25.0, y + 22.0, 9.5, 400, Align::Left, GREY, 1.0, title_w);
-            }
+            self.todo_row(i, PAD - 4.0, 48.0 + row as f32 * 34.0, CW + 4.0, 30.0);
         }
-        if self.tasks.len() > rows {
-            let n = self.tasks.len() as f32;
-            let h = (ch - 16.0) * rows as f32 / n;
-            let y = cy0 + 8.0 + (ch - 16.0 - h) * self.task_scroll as f32 / (n - rows as f32);
-            g.fill_rrect(cx0 + cw - 4.0, y, 2.0, h, 1.0, 0x4A4A4A, 1.0);
-        }
-    }
-
-    fn todo_form_v(&self, f: &Form, x0: f32, y0: f32, w: f32) {
-        let g = self.g();
-        let (x, iw) = (x0 + 8.0, w - 16.0);
-        let blink = (self.started.elapsed().as_millis() / 530) % 2 == 0;
-        let focus_title = f.field == 0;
-        let ty = y0 + 10.0;
-        g.fill_rrect(x, ty, iw, 28.0, 8.0, 0x080808, 1.0);
-        g.stroke_rrect(x, ty, iw, 28.0, 8.0, if focus_title { 0xD9D9D9 } else { 0x333333 }, 1.0, 1.4, false);
-        self.hit(x, ty, iw, 28.0, Act::TodoTitle);
-        if f.title.is_empty() && !focus_title {
-            g.text("Task title", x + 9.0, ty + 14.0, 12.0, 400, Align::Left, 0x6A6A6A, 1.0, iw - 16.0);
-        } else {
-            let mut shown = f.title.clone();
-            while g.measure(&shown, 12.0, 400) > iw - 22.0 && !shown.is_empty() {
-                shown.remove(0);
-            }
-            let cursor = if focus_title && blink { "|" } else { "" };
-            let text = if shown.is_empty() && !cursor.is_empty() { cursor.to_string() } else { format!("{}{}", shown, cursor) };
-            g.text(&text, x + 9.0, ty + 14.0, 12.0, 400, Align::Left, WHITE, 1.0, iw - 14.0);
-        }
-        let ry = ty + 36.0;
-        g.fill_rrect(x, ry, iw, 28.0, 8.0, 0x212124, 1.0);
-        if !focus_title {
-            g.stroke_rrect(x, ry, iw, 28.0, 8.0, 0xD9D9D9, 1.0, 1.2, false);
-        }
-        self.hit(x, ry, iw, 28.0, Act::TodoTime);
-        g.icon(glyph::CLOCK, x + 14.0, ry + 14.0, 12.0, WHITE, 1.0);
-        g.text(&model::time_mask(&f.digits), x + 27.0, ry + 14.0, 12.0, 400, Align::Left, if f.digits.is_empty() { 0x6A6A6A } else { WHITE }, 1.0, iw - 50.0);
-        if f.edit.is_some() {
-            self.round_button(x + iw - 13.0, ry + 14.0, 9.0, 0x2A1515, glyph::DELETE, 9.0, RED, Act::TodoDelete);
-        }
-        let by = ry + 38.0;
-        let half = (iw - 8.0) / 2.0;
-        self.button(x, by, half, 24.0, 12.0, 0x262626, 1.0, Act::TodoCancel);
-        g.text("Cancel", x + half / 2.0, by + 12.0, 12.0, 400, Align::Center, WHITE, 1.0, half);
-        self.button(x + half + 8.0, by, half, 24.0, 12.0, GREEN, 1.0, Act::TodoSave);
-        g.text("Save", x + half + 8.0 + half / 2.0, by + 12.0, 12.0, 700, Align::Center, 0x0B2A12, 1.0, half);
-        g.text_box("Enter saves · Esc cancels · Tab switches to the time (HHMM HHMM)", x, by + 34.0, iw, 40.0, 10.0, 400, DIM, 1.0);
+        self.todo_scrollbar(PW - 10.0, 48.0, rows as f32 * 34.0 - 4.0, rows);
     }
 }

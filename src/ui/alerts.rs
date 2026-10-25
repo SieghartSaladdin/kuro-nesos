@@ -20,6 +20,14 @@ impl App {
     }
 
     pub(super) fn sys_alert(&mut self, s: SysAlert) {
+        if let Some(p) = s.file {
+            // a new screenshot: straight onto the Shelf (newest first)
+            if self.settings.screenshots {
+                self.shelf.add_path(p);
+                self.push(Alert::simple(AlertIcon::Glyph(glyph::PICTURE, AMBER), "Screenshot", "Saved to Shelf", AMBER));
+            }
+            return;
+        }
         let mut a = Alert::simple(AlertIcon::Glyph(s.icon, s.color), &s.title, &s.value, s.color);
         if s.icon == glyph::MESSAGE {
             a.ttl = Duration::from_millis(5000);
@@ -72,10 +80,10 @@ impl App {
             match step {
                 0 => self.push(Alert::simple(AlertIcon::CapsOn, "Caps Lock", "On", GREEN)),
                 1 => self.push(Alert::simple(AlertIcon::Battery(true, 82), "Charger connected", "Charging · 82%", BATTERY_GREEN)),
-                2 => self.sys_alert(SysAlert { icon: glyph::BLUETOOTH, title: "Connected".into(), value: "Galaxy Buds2 Pro".into(), color: BLUE }),
-                3 => self.sys_alert(SysAlert { icon: glyph::WIFI, title: "Connected".into(), value: "Rumah_5G".into(), color: GREEN }),
+                2 => self.sys_alert(SysAlert { icon: glyph::BLUETOOTH, title: "Connected".into(), value: "Galaxy Buds2 Pro".into(), color: BLUE, file: None }),
+                3 => self.sys_alert(SysAlert { icon: glyph::WIFI, title: "Connected".into(), value: "Rumah_5G".into(), color: GREEN, file: None }),
                 4 => self.push(Alert::simple(AlertIcon::Glyph(glyph::KEYBOARD, WHITE), "Keyboard", "ID-ID", WHITE)),
-                5 => self.sys_alert(SysAlert { icon: glyph::MESSAGE, title: "WhatsApp".into(), value: "Dina: Nanti malam jadi ngopi?".into(), color: WHITE }),
+                5 => self.sys_alert(SysAlert { icon: glyph::MESSAGE, title: "WhatsApp".into(), value: "Dina: Nanti malam jadi ngopi?".into(), color: sys::app_color("WhatsApp"), file: None }),
                 6 => self.push_action_alert(AlertIcon::Glyph(glyph::DROP, CYAN), "Time to Drink", &format!("Stay hydrated! {} ml", self.water.each()), BLUE, vec![("Drank".into(), AlertAction::Drank), ("Snooze".into(), AlertAction::Snooze)]),
                 7 => {
                     if self.tasks.is_empty() {
@@ -85,7 +93,7 @@ impl App {
                     self.push_action_alert(AlertIcon::Glyph(glyph::CHECKLIST, GREEN), "Task Time!", &title, GREEN, vec![("Start".into(), AlertAction::TaskStart(0)), ("Later".into(), AlertAction::TaskLater(0))]);
                 }
                 8 => {
-                    let mut a = Alert::simple(AlertIcon::Glyph(glyph::STOPWATCH, RED), "Focus Time!", "Back to work, 25 min", RED);
+                    let mut a = Alert::simple(AlertIcon::Glyph(glyph::STOPWATCH, AMBER), "Focus Time!", "Back to work, 25 min", AMBER);
                     a.sound = true;
                     self.push(a);
                 }
@@ -100,30 +108,57 @@ impl App {
         self.origin(x0, self.top.get());
         let g = self.g();
         if !a.big() {
-            self.alert_icon(a.icon, 24.0, 17.5, 9.0);
-            g.text(&a.title, 46.0, 17.5, 13.5, 400, Align::Left, WHITE, 1.0, w * 0.48);
-            g.text(&a.value, w - 22.0, 17.5, 13.5, 400, Align::Right, a.color, 1.0, w * 0.42);
+            self.alert_badge(a, 22.0, 17.5, 11.0);
+            g.text(&a.title, 42.0, 17.5, 13.0, 600, Align::Left, WHITE, 1.0, w * 0.5);
+            g.text(&a.value, w - 20.0, 17.5, 13.0, 400, Align::Right, a.color, 1.0, w * 0.42);
             return;
         }
-        // actionable card
-        g.glow(30.0, 30.0, 26.0, 26.0, a.color, 0.18);
-        g.fill_circle(30.0, 30.0, 15.0, a.color, 0.16);
-        self.alert_icon(a.icon, 30.0, 30.0, 12.0);
-        g.text(&a.title, 54.0, 22.0, 14.5, 700, Align::Left, WHITE, 1.0, w - 70.0);
-        g.text(&a.value, 54.0, 40.0, 12.0, 400, Align::Left, GREY, 1.0, w - 70.0);
-        let mut right = w - 16.0;
+        // card: badge, title + body, buttons on the right, time line along the bottom
+        let h = if a.actions.is_empty() { 60.0 } else { 80.0 };
+        self.alert_badge(a, 34.0, 30.0, 18.0);
+        g.text(&a.title, 62.0, 22.0, 13.5, 700, Align::Left, WHITE, 1.0, w - 120.0);
+        g.text("now", w - 22.0, 22.0, 10.5, 400, Align::Right, DIM, 1.0, 40.0);
+        g.text(&a.value, 62.0, 40.0, 12.0, 400, Align::Left, 0xB8B8B8, 1.0, w - 84.0);
+        let mut right = w - 18.0;
         for (i, (label, _)) in a.actions.iter().enumerate().rev() {
-            let bw = g.measure(label, 12.0, 600) + 26.0;
-            let primary = i == 0;
-            self.button(right - bw, 50.0, bw, 22.0, 11.0, if primary { a.color } else { 0x262626 }, if primary { 0.95 } else { 1.0 }, Act::Alert(i));
-            g.text(label, right - bw / 2.0, 61.0, 12.0, 600, Align::Center, if primary { 0x08121C } else { WHITE }, 1.0, bw);
-            right -= bw + 8.0;
+            let bw = g.measure(label, 11.5, 600) + 26.0;
+            self.alert_button(a, i, label, right - bw, 51.0, bw);
+            right -= bw + 6.0;
         }
-        // remaining time bar
+        self.alert_timer(a, 24.0, h - 4.0, w - 48.0);
+    }
+
+    /// Rounded square in the alert's colour with its icon; it pops in when the alert arrives.
+    pub(super) fn alert_badge(&self, a: &Alert, cx: f32, cy: f32, half: f32) {
+        let g = self.g();
+        let e = a.born.map_or(1.0, |b| b.elapsed().as_secs_f32());
+        let pop = 1.0 + 0.22 * (e.min(0.35) / 0.35 * std::f32::consts::PI).sin();
+        let s = half * pop;
+        g.fill_rrect(cx - s, cy - s, 2.0 * s, 2.0 * s, s * 0.55, a.color, 0.16);
+        g.stroke_rrect(cx - s, cy - s, 2.0 * s, 2.0 * s, s * 0.55, a.color, 0.35, 1.0, false);
+        self.alert_icon(a.icon, cx, cy, s * 0.62);
+    }
+
+    /// Primary action filled with the alert colour, the others dark with a hairline.
+    pub(super) fn alert_button(&self, a: &Alert, i: usize, label: &str, x: f32, y: f32, w: f32) {
+        let g = self.g();
+        let primary = i == 0;
+        let act = Act::Alert(i);
+        self.button(x, y, w, 22.0, 11.0, if primary { a.color } else { CARD }, 1.0, act);
+        if !primary {
+            g.stroke_rrect(x, y, w, 22.0, 11.0, HAIR, 1.0, 1.0, false);
+        }
+        let fg = if primary { mix(a.color, 0x000000, 0.82) } else { WHITE };
+        g.text(label, x + w / 2.0, y + 11.0, 11.5, 600, Align::Center, fg, 1.0, w);
+    }
+
+    /// Thin line in the alert colour that shrinks until the alert goes away.
+    pub(super) fn alert_timer(&self, a: &Alert, x: f32, y: f32, w: f32) {
         if let Some(b) = a.born {
             let f = 1.0 - (b.elapsed().as_secs_f32() / a.ttl.as_secs_f32()).min(1.0);
-            let (y, full) = if a.actions.is_empty() { (52.0, w - 70.0) } else { (72.0, (right - 62.0).max(0.0)) };
-            g.fill_rrect(54.0, y, full * f, 2.0, 1.0, if a.color == WHITE { GREY } else { a.color }, 0.5);
+            let g = self.g();
+            g.fill_rrect(x, y, w, 2.0, 1.0, 0x1C1C1C, 1.0);
+            g.fill_rrect(x, y, w * f, 2.0, 1.0, a.color, 0.7);
         }
     }
 

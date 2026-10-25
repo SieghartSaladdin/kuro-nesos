@@ -1,20 +1,32 @@
 //! Persistent models: settings, water reminder, to-do list, autostart.
-//! Files live in %APPDATA%\KuroNesos.
-//!   settings.txt  pet=1 / minimal=0 / lyrics=1 / romaji=1 / dock=top|left|right / offset=0.500
+//! Files live in %APPDATA%\KuroNesos (or, in portable mode, in KuroNesosData next to the exe).
+//!   settings.txt  pet=1 / minimal=0 / lyrics=1 / romaji=1 / dock=top|left|right / offset=0.500 / screenshots=1
 //!   water.txt     bottle, goal, start, end, day, taken, inb, fired, vis, hours, on
 //!   todo.txt      day=YYYYMMDD then one task per line: "done|HH:MM|HH:MM|title"
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use windows::core::w;
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::*;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 
+/// Portable mode: when a `portable.txt` sits next to the exe, every file (settings, water,
+/// to-do, shelf, log, Japanese dictionary) lives in a `KuroNesosData` folder beside it.
+pub fn portable_dir() -> Option<PathBuf> {
+    static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let base = exe.parent()?;
+        base.join("portable.txt").is_file().then(|| base.join("KuroNesosData"))
+    })
+    .clone()
+}
+
 pub fn data_dir(var: &str) -> PathBuf {
-    let base = std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    let d = base.join("KuroNesos");
+    let d = portable_dir().unwrap_or_else(|| std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".")).join("KuroNesos"));
     let _ = fs::create_dir_all(&d);
     d
 }
@@ -72,6 +84,8 @@ pub struct Settings {
     pub dock: Dock,
     /// Centre of the notch along its edge, as a fraction of the screen (0.5 = middle).
     pub offset: f32,
+    /// Put new screenshots on the Shelf.
+    pub screenshots: bool,
 }
 
 /// Where the notch lives: hanging from the top edge, or against the left/right edge.
@@ -94,7 +108,7 @@ impl Dock {
 
 impl Settings {
     pub fn load() -> Self {
-        let mut s = Settings { pet: true, minimal: false, lyrics: true, romaji: true, dock: Dock::Top, offset: 0.5 };
+        let mut s = Settings { pet: true, minimal: false, lyrics: true, romaji: true, dock: Dock::Top, offset: 0.5, screenshots: true };
         if let Ok(t) = fs::read_to_string(roaming().join("settings.txt")) {
             for (k, v) in kv(&t) {
                 let on = v.trim() == "1";
@@ -103,6 +117,7 @@ impl Settings {
                     "minimal" => s.minimal = on,
                     "lyrics" => s.lyrics = on,
                     "romaji" => s.romaji = on,
+                    "screenshots" => s.screenshots = on,
                     "dock" => {
                         s.dock = match v.trim() {
                             "left" => Dock::Left,
@@ -120,13 +135,14 @@ impl Settings {
 
     pub fn save(&self) {
         let t = format!(
-            "pet={}\nminimal={}\nlyrics={}\nromaji={}\ndock={}\noffset={:.3}\n",
+            "pet={}\nminimal={}\nlyrics={}\nromaji={}\ndock={}\noffset={:.3}\nscreenshots={}\n",
             self.pet as u8,
             self.minimal as u8,
             self.lyrics as u8,
             self.romaji as u8,
             self.dock.name(),
-            self.offset
+            self.offset,
+            self.screenshots as u8
         );
         let _ = fs::write(roaming().join("settings.txt"), t);
     }

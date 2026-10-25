@@ -25,6 +25,7 @@ use crate::sys::{self, glyph, SysAlert};
 
 mod alerts;
 mod anim;
+mod home;
 mod input;
 mod mascot;
 mod music;
@@ -33,7 +34,8 @@ mod paint;
 mod vertical;
 mod window;
 
-use anim::{ease, Fx, Spring};
+use anim::{ease, mix, Fx, Spring};
+use home::page_of;
 pub use window::{activate, open_path, place_window};
 use window::{cursor_screen, mouse_buttons, set_click_through};
 
@@ -57,17 +59,25 @@ const CYAN: u32 = 0x66DBFF;
 const GREEN: u32 = 0x40B854;
 const BATTERY_GREEN: u32 = 0x34E05C;
 const ORANGE: u32 = 0xFF9F0A;
+// Kuro amber: black surfaces, hairlines, and one accent for whatever is active
+const AMBER: u32 = 0xF5C542;
+/// Text and icons drawn on amber.
+const ON_AMBER: u32 = 0x1A1300;
+const CARD: u32 = 0x131313;
+const HAIR: u32 = 0x222222;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Page {
+    Home,
     Media,
     Pomodoro,
     Water,
     Shelf,
     Todo,
+    Settings,
 }
 
-const PAGES: [Page; 5] = [Page::Media, Page::Pomodoro, Page::Water, Page::Shelf, Page::Todo];
+const PAGES: [Page; 7] = [Page::Home, Page::Media, Page::Pomodoro, Page::Water, Page::Shelf, Page::Todo, Page::Settings];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Act {
@@ -84,10 +94,10 @@ pub enum Act {
     PomoReset,
     PomoShort,
     PomoFocus,
+    PomoLong,
     WaterOn,
     WaterDrink,
     WaterSettings,
-    WaterSub(u8),
     WaterBack,
     Bottle(i32),
     Goal(usize),
@@ -96,6 +106,8 @@ pub enum Act {
     WaterReset,
     ShelfItem(usize),
     ShelfClear,
+    /// The small "x" on a Shelf card.
+    ShelfRemove(usize),
     TodoAdd,
     TodoEdit,
     TodoRow(usize),
@@ -108,6 +120,10 @@ pub enum Act {
     Alert(usize),
     /// The panel header: drag it to move the notch along an edge or to another edge.
     Grab,
+    /// A Home tile: opens that page.
+    Tile(usize),
+    /// A Settings row (0 autostart, 1 cat, 2 romaji, 3 lyrics, 4 minimal, 5 screenshots, 6 reset position).
+    Setting(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -268,7 +284,10 @@ pub struct App {
     /// Animated pagination indicator position (page index).
     dot: Spring,
     water_settings: bool,
-    water_sub: u8,
+    /// When "Drink" was last pressed (a drop falls into the bottle).
+    drink_at: Option<Instant>,
+    /// When the track last changed (the album art bumps).
+    track_change: Instant,
     reset_confirm: Option<Instant>,
     tasks: Vec<Task>,
     task_sel: Option<usize>,
@@ -284,8 +303,14 @@ pub struct App {
     water: Water,
     shelf: Shelf,
     shelf_drag: bool,
+    /// Decoded thumbnails of image items on the Shelf (path, bitmap), most recent last.
+    thumbs: RefCell<Vec<(PathBuf, Option<ID2D1Bitmap>)>>,
+    /// Loudness and beat of the music, for the equalizer bars.
+    beat: crate::audio::Beat,
     press: Option<(f32, f32, Act)>,
     settings: Settings,
+    /// "Start with Windows" (registry), cached for the Settings page.
+    autostart: bool,
     queue: VecDeque<Alert>,
     alert: Option<Alert>,
     mascot: MascotState,
@@ -396,7 +421,8 @@ impl App {
             slide: Spring::new(0.0),
             dot: Spring::new(page as f32),
             water_settings: false,
-            water_sub: 0,
+            drink_at: None,
+            track_change: Instant::now(),
             reset_confirm: None,
             tasks: model::load_tasks(),
             task_sel: None,
@@ -412,8 +438,11 @@ impl App {
             water: Water::load(),
             shelf: Shelf::load(),
             shelf_drag: false,
+            thumbs: RefCell::new(Vec::new()),
+            beat: crate::audio::Beat::new(),
             press: None,
             settings,
+            autostart: model::autostart_enabled(),
             queue: VecDeque::new(),
             alert: None,
             mascot: MascotState::Off,
@@ -453,6 +482,12 @@ impl App {
         self.settings.pet = !self.settings.pet;
         self.settings.save();
         self.mascot = MascotState::Off;
+    }
+
+    /// Re-reads "Start with Windows" after the tray menu changed it.
+    pub fn sync_autostart(&mut self) {
+        self.autostart = model::autostart_enabled();
+        self.dirty = true;
     }
 
     pub fn toggle_minimal(&mut self) {
@@ -515,6 +550,7 @@ impl App {
         }
 
         self.update_media();
+        self.beat.update(dt, self.media.playing);
         self.update_pomodoro();
         self.update_alerts(now);
         self.update_mascot(now);
@@ -529,6 +565,7 @@ impl App {
         moving |= self.slide.step(0.0, dt);
         moving |= self.dot.step(self.page as f32, dt);
         moving |= self.fx.step(self.hot, dt);
+        moving |= self.drink_at.is_some_and(|t| t.elapsed() < Duration::from_millis(1000));
         if target != self.shown {
             self.content_a = (self.content_a - dt * 12.0).max(0.0);
             if self.content_a <= 0.0 {
@@ -608,7 +645,7 @@ impl App {
     fn clock_stamp(&self) -> u32 {
         let n = model::now();
         let page = PAGES[self.page];
-        let seconds = self.shown == Mode::Expanded && ((page == Page::Media && self.media.has_session) || page == Page::Pomodoro);
+        let seconds = self.shown == Mode::Expanded && ((page == Page::Media && self.media.has_session) || page == Page::Pomodoro || (page == Page::Home && (self.pomo.running || self.media.playing)));
         if seconds {
             n.minutes * 60 + n.second
         } else {
@@ -619,7 +656,8 @@ impl App {
     fn live_animation(&self) -> bool {
         match self.shown {
             Mode::Live | Mode::Lyrics | Mode::Mascot | Mode::Alert | Mode::Timer => true,
-            Mode::Expanded => self.media.playing || self.pomo.running || self.shelf_drag,
+            // the water page keeps its surface waving while it is open
+            Mode::Expanded => self.media.playing || self.pomo.running || self.shelf_drag || PAGES[self.page] == Page::Water,
             _ => false,
         }
     }
@@ -721,7 +759,7 @@ impl App {
                 }
                 _ => ("Focus Time!", "Back to work, 25 min", PMode::Focus),
             };
-            let mut a = Alert::simple(AlertIcon::Glyph(glyph::STOPWATCH, RED), title, value, RED);
+            let mut a = Alert::simple(AlertIcon::Glyph(glyph::STOPWATCH, AMBER), title, value, AMBER);
             a.sound = true;
             a.ttl = Duration::from_secs(5);
             self.push(a);
@@ -769,10 +807,11 @@ impl App {
             }
             Mode::Lyrics => {
                 // the pill grows/shrinks with the current line (like Dynamic Island)
-                let w = self.gfx.as_ref().map_or(360.0, |g| (g.measure(&self.lyric_text(), 13.0, 600) + 96.0).clamp(230.0, 600.0));
+                let w = self.gfx.as_ref().map_or(360.0, |g| (g.measure(&self.lyric_text(), 13.0, 600) + 120.0).clamp(230.0, 600.0));
                 (w, 30.0, 11.0)
             }
-            Mode::Live => (232.0, 30.0, 11.0),
+            // without a lyric line the pill only needs the cover and the equalizer
+            Mode::Live => (118.0, 30.0, 11.0),
             Mode::Timer => (200.0, 30.0, 11.0),
             Mode::Minimal => (110.0, 22.0, 8.0),
             // the notch becomes the cat's head

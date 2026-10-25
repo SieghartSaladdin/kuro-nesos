@@ -223,7 +223,7 @@ impl App {
     pub fn shelf_drag(&mut self, on: bool) {
         self.shelf_drag = on;
         if on {
-            self.set_page(3);
+            self.set_page(page_of(Page::Shelf));
         }
         self.dirty = true;
     }
@@ -234,7 +234,7 @@ impl App {
             self.shelf.add(d);
         }
         self.shelf_drag = false;
-        self.set_page(3);
+        self.set_page(page_of(Page::Shelf));
         self.hover = true;
         self.dirty = true;
     }
@@ -290,12 +290,20 @@ impl App {
         self.slide = Spring::new(if dir > 0 { 36.0 } else { -36.0 });
         self.page = next as usize;
         self.water_settings = false;
+        self.page_opened();
     }
 
     pub(super) fn set_page(&mut self, p: usize) {
         if p != self.page {
             self.slide = Spring::new(if p > self.page { 36.0 } else { -36.0 });
             self.page = p;
+            self.page_opened();
+        }
+    }
+
+    fn page_opened(&mut self) {
+        if PAGES[self.page] == Page::Settings {
+            self.autostart = model::autostart_enabled();
         }
     }
 
@@ -349,6 +357,23 @@ impl App {
     pub(super) fn act(&mut self, act: Act, x: f32) {
         match act {
             Act::Grab => {}
+            Act::Tile(p) => self.set_page(p),
+            Act::Setting(0) => {
+                model::set_autostart(!self.autostart);
+                self.autostart = model::autostart_enabled();
+            }
+            Act::Setting(1) => self.toggle_pet(),
+            Act::Setting(2) => self.toggle_romaji(),
+            Act::Setting(3) => {
+                self.settings.lyrics = !self.settings.lyrics;
+                self.settings.save();
+            }
+            Act::Setting(4) => self.toggle_minimal(),
+            Act::Setting(5) => {
+                self.settings.screenshots = !self.settings.screenshots;
+                self.settings.save();
+            }
+            Act::Setting(_) => self.reset_position(),
             Act::PagePrev => self.go_page(-1),
             Act::PageNext => self.go_page(1),
             Act::Dot(i) => self.set_page(i),
@@ -387,6 +412,11 @@ impl App {
                 self.pomo.remaining = PMode::Short.secs();
                 self.pomo.running = false;
             }
+            Act::PomoLong => {
+                self.pomo.mode = PMode::Long;
+                self.pomo.remaining = PMode::Long.secs();
+                self.pomo.running = false;
+            }
             Act::PomoFocus => {
                 self.pomo.mode = PMode::Focus;
                 self.pomo.remaining = PMode::Focus.secs();
@@ -402,10 +432,6 @@ impl App {
             Act::WaterDrink => self.drink(),
             Act::WaterSettings => self.water_settings = true,
             Act::WaterBack => self.water_settings = false,
-            Act::WaterSub(s) => {
-                self.water_sub = s;
-                self.water.vis = s == 0;
-            }
             Act::Bottle(d) => {
                 self.water.set_bottle((self.water.bottle as i32 + d * 50).max(100) as u32);
                 self.water.save();
@@ -436,6 +462,7 @@ impl App {
             }
             Act::ShelfItem(_) => {}
             Act::ShelfClear => self.shelf.clear(),
+            Act::ShelfRemove(i) => self.shelf.remove(i),
             Act::TodoAdd => {
                 if self.form.is_some() {
                     self.close_form();
@@ -508,6 +535,7 @@ impl App {
     }
 
     pub(super) fn drink(&mut self) {
+        self.drink_at = Some(Instant::now());
         if let Some(WaterEvent::GoalReached) = self.water.drink() {
             let mut a = Alert::simple(AlertIcon::Glyph(glyph::DROP, CYAN), "Goal reached", &format!("{:.1} L today", self.water.taken as f32 / 1000.0), CYAN);
             a.sound = true;

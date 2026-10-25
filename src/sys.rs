@@ -31,11 +31,9 @@ pub mod glyph {
     pub const ADD: u16 = 0xE710;
     pub const REMOVE: u16 = 0xE738;
     pub const CLOCK: u16 = 0xE823;
-    pub const BELL: u16 = 0xEA8F;
     pub const EDIT: u16 = 0xE70F;
     pub const CHECKLIST: u16 = 0xE9D5;
     pub const DOWNLOAD: u16 = 0xE896;
-    pub const CAFE: u16 = 0xEC32;
     pub const STOPWATCH: u16 = 0xE916;
     pub const MESSAGE: u16 = 0xE8BD;
     pub const MUSIC: u16 = 0xE8D6;
@@ -43,14 +41,16 @@ pub mod glyph {
     pub const WIFI: u16 = 0xE701;
     pub const ETHERNET: u16 = 0xE839;
     pub const KEYBOARD: u16 = 0xE765;
-    pub const ADD_CIRCLE: u16 = 0xECC8;
-    pub const TARGET: u16 = 0xF272;
     pub const DROP: u16 = 0xEB42;
     pub const DOC: u16 = 0xE8A5;
     pub const FOLDER: u16 = 0xE8B7;
     pub const LINK: u16 = 0xE71B;
     pub const PICTURE: u16 = 0xEB9F;
+    pub const CLOSE: u16 = 0xE711;
     pub const CHECK: u16 = 0xE73E;
+    pub const HOME: u16 = 0xE80F;
+    pub const ATTACH: u16 = 0xE723;
+    pub const GEAR: u16 = 0xE713;
 }
 
 pub fn log(msg: &str) {
@@ -68,10 +68,12 @@ pub struct SysAlert {
     pub title: String,
     pub value: String,
     pub color: u32,
+    /// A new screenshot to put on the Shelf (the alert text is then made by the UI).
+    pub file: Option<std::path::PathBuf>,
 }
 
 fn alert(icon: u16, title: &str, value: &str, color: u32) -> SysAlert {
-    SysAlert { icon, title: title.into(), value: value.into(), color }
+    SysAlert { icon, title: title.into(), value: value.into(), color, file: None }
 }
 
 // ------------------------------------------------------------------ background watcher
@@ -84,6 +86,7 @@ pub fn spawn_watchers(tx: Sender<SysAlert>) {
         let mut net_prev: Option<(u8, String)> = None;
         let mut bt_prev: Option<HashMap<String, String>> = None;
         let mut notif = NotificationWatch::new();
+        let mut shots = ShotWatch::new();
         let mut tick: u64 = 0;
         loop {
             if tick % 3 == 0 {
@@ -116,6 +119,9 @@ pub fn spawn_watchers(tx: Sender<SysAlert>) {
                 for a in notif.poll() {
                     let _ = tx.send(a);
                 }
+            }
+            for p in shots.poll() {
+                let _ = tx.send(SysAlert { icon: glyph::PICTURE, title: "Screenshot".into(), value: String::new(), color: 0xF5C542, file: Some(p) });
             }
             tick += 1;
             std::thread::sleep(Duration::from_millis(1000));
@@ -177,6 +183,88 @@ fn bluetooth_connected() -> Option<HashMap<String, String>> {
     Some(out)
 }
 
+/// The user's Screenshots folder (where Win+PrtScn and the Snipping Tool save captures).
+fn screenshots_dir() -> Option<std::path::PathBuf> {
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::{SHGetKnownFolderPath, FOLDERID_Screenshots, KF_FLAG_DEFAULT};
+    let known = unsafe {
+        SHGetKnownFolderPath(&FOLDERID_Screenshots, KF_FLAG_DEFAULT, HANDLE::default()).ok().map(|p| {
+            let s = p.to_string().unwrap_or_default();
+            CoTaskMemFree(Some(p.0 as *const _));
+            std::path::PathBuf::from(s)
+        })
+    };
+    known.filter(|p| p.is_dir()).or_else(|| {
+        let p = std::path::PathBuf::from(std::env::var_os("USERPROFILE")?).join("Pictures").join("Screenshots");
+        p.is_dir().then_some(p)
+    })
+}
+
+/// Reports images that appear in the Screenshots folder after start-up, once they are
+/// completely written (non-empty and unchanged for a moment).
+struct ShotWatch {
+    dir: Option<std::path::PathBuf>,
+    seen: HashSet<std::ffi::OsString>,
+}
+
+impl ShotWatch {
+    fn new() -> Self {
+        let dir = screenshots_dir();
+        let seen = dir.as_ref().and_then(|d| std::fs::read_dir(d).ok()).map(|r| r.flatten().map(|e| e.file_name()).collect()).unwrap_or_default();
+        ShotWatch { dir, seen }
+    }
+
+    fn poll(&mut self) -> Vec<std::path::PathBuf> {
+        let Some(dir) = &self.dir else { return Vec::new() };
+        let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+        let mut out = Vec::new();
+        for e in entries.flatten() {
+            let name = e.file_name();
+            if self.seen.contains(&name) {
+                continue;
+            }
+            let p = e.path();
+            let image = p.extension().and_then(|x| x.to_str()).is_some_and(|x| matches!(x.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg"));
+            let ready = e.metadata().is_ok_and(|m| m.len() > 0 && m.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|d| d > Duration::from_millis(400)));
+            if !image {
+                self.seen.insert(name);
+            } else if ready {
+                self.seen.insert(name);
+                out.push(p);
+            }
+        }
+        out
+    }
+}
+
+/// Brand colour of well-known apps, so a mirrored notification is recognisable at a glance
+/// (WhatsApp green, Telegram blue, ...). Other apps get a neutral light grey.
+pub fn app_color(app: &str) -> u32 {
+    let lower = app.to_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    const BRANDS: [(&str, u32); 18] = [
+        ("whatsapp", 0x25D366),
+        ("telegram", 0x2AABEE),
+        ("discord", 0x5865F2),
+        ("instagram", 0xE1306C),
+        ("messenger", 0x0084FF),
+        ("facebook", 0x1877F2),
+        ("line", 0x06C755),
+        ("signal", 0x3A76F0),
+        ("slack", 0xE01E5A),
+        ("teams", 0x7B83EB),
+        ("outlook", 0x0078D4),
+        ("mail", 0x0078D4),
+        ("gmail", 0xEA4335),
+        ("spotify", 0x1DB954),
+        ("youtube", 0xFF3B30),
+        ("zoom", 0x2D8CFF),
+        ("steam", 0x66C0F4),
+        ("twitter", 0x1D9BF0),
+    ];
+    BRANDS.iter().find(|(k, _)| words.contains(k)).map_or(0xD0D0D0, |&(_, c)| c)
+}
+
 /// Mirrors new Windows toast notifications (needs the user's "notification access" consent).
 struct NotificationWatch {
     listener: Option<UserNotificationListener>,
@@ -230,7 +318,7 @@ impl NotificationWatch {
                 }
             }
             let body = texts.join(": ");
-            out.push(alert(glyph::MESSAGE, if app.is_empty() { "Notification" } else { &app }, &body, 0xFFFFFF));
+            out.push(alert(glyph::MESSAGE, if app.is_empty() { "Notification" } else { &app }, &body, app_color(&app)));
         }
         self.primed = true;
         out
