@@ -97,7 +97,8 @@ impl App {
     /// output cannot be read). `x` is the left edge of the `EQ_W`-wide strip.
     pub(super) fn eq_bars(&self, x: f32, cy: f32, color: u32) {
         let t = self.started.elapsed().as_secs_f32();
-        let live = self.beat.live();
+        // the demo song makes no sound, so it keeps the steady loop
+        let live = self.beat.live() && !self.demo.lyrics;
         let mid = EQ_BARS / 2;
         for i in 0..EQ_BARS {
             let band = i.abs_diff(mid);
