@@ -11,6 +11,9 @@ use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 
 use crate::json::{self, Json};
 
+/// Identifies the app to LRCLIB and GitHub, as LRCLIB asks clients to.
+pub const USER_AGENT: &str = "Kuro-Nesos/1.1 (https://github.com/SieghartSaladdin/kuro-nesos)";
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
     Idle,
@@ -83,7 +86,7 @@ fn http_get(url: &str) -> Option<String> {
     let client = HttpClient::new().ok()?;
     if let Ok(h) = client.DefaultRequestHeaders() {
         if let Ok(ua) = h.UserAgent() {
-            let _ = ua.TryParseAdd(&HSTRING::from("Kuro-Nesos/1.0 (https://github.com/SieghartSaladdin/kuro-nesos)"));
+            let _ = ua.TryParseAdd(&HSTRING::from(USER_AGENT));
         }
     }
     let uri = Uri::CreateUri(&HSTRING::from(url)).ok()?;

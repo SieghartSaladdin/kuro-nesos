@@ -47,6 +47,8 @@ in `%LOCALAPPDATA%\KuroNesos`. `settings.txt` is `key=value` lines:
 | `src/media.rs` | Global System Media Transport Controls (title, art, timeline, commands) |
 | `src/lyrics.rs`, `src/json.rs` | LRCLIB client, LRC parser, tiny JSON reader |
 | `src/roman.rs` | offline romanization (ICU `icu.dll` transliterators, Windows Japanese reading analyzer, Hangul RR) |
+| `src/jdict.rs` | kanji reader for PCs without Japanese data: Viterbi over the memory-mapped IPADIC dictionary `ja-reading.knd`, downloaded once from the `ja-dict-1` release |
+| `tools/make_ja_dict.py` | builds `ja-reading.knd` from the IPADIC sources (format documented in the script) |
 | `src/sys.rs` | battery, network, Bluetooth, notifications, keyboard layout, fullscreen detection, chime, memory trim |
 | `src/model.rs` | settings, water reminder, to-do list, autostart |
 | `src/shelf.rs` | shelf storage and OLE drag & drop in/out |
@@ -111,8 +113,11 @@ Targets: **private memory < 50 MB** (typically 15–25 MB), **idle CPU ≈ 1–3
 
 ## Privacy
 
-Online traffic is only the lyrics lookup on `lrclib.net` (title + artist + duration).
-Romanization is offline. Do not add telemetry or other network calls without saying so in
+Online traffic is the lyrics lookup on `lrclib.net` (title + artist + duration) and, on PCs
+without Japanese reading data, the one-time download of `ja-reading.knd` from the
+`ja-dict-1` GitHub release (lyrics are never sent anywhere). Romanization is offline. If the
+dictionary format changes, bump its version, publish a new `ja-dict-N` release and update
+`URL` in `jdict.rs`; the IPADIC copyright notice must stay embedded in the file. Do not add telemetry or other network calls without saying so in
 the README's Privacy section.
 
 ## Testing changes visually

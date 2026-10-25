@@ -11,6 +11,7 @@
 //!             --test-roman "line|line" (logs the romanization of each line, then exits).
 
 mod gfx;
+mod jdict;
 mod json;
 mod lyrics;
 mod media;

@@ -1,7 +1,8 @@
 //! Offline romanization of lyrics (romaji, pinyin, Cyrillic -> Latin, Hangul -> Latin, ...).
-//! Japanese text is first read into kana with Windows' JapanesePhoneticAnalyzer, so kanji get
-//! Japanese readings instead of Chinese pinyin; everything then goes through the ICU
-//! transliterator that ships with Windows (icu.dll, "Any-Latin").
+//! Japanese text is first read into kana with Windows' JapanesePhoneticAnalyzer, or, when
+//! Windows has no Japanese reading data, with the downloaded IPADIC reader (jdict.rs), so
+//! kanji get Japanese readings instead of Chinese pinyin; everything then goes through the
+//! ICU transliterator that ships with Windows (icu.dll, "Any-Latin").
 
 use windows::core::HSTRING;
 use windows::Globalization::JapanesePhoneticAnalyzer;
@@ -109,17 +110,17 @@ pub struct Romanizer {
     /// ("Myagkoye kreslo" instead of "Mâgkoe kreslo", "maeumeun" instead of "ma-eum-eun").
     russian: Option<Translit>,
     japanese: bool,
+    /// Kanji reader used when Windows has no Japanese reading data.
+    jdict: Option<crate::jdict::Dict>,
 }
 
 impl Romanizer {
     /// `japanese` should be true when the song contains kana anywhere, so kanji-only lines
     /// of that song are read as Japanese too.
     pub fn new(sample: &[&str]) -> Self {
-        Romanizer {
-            any: Translit::open("Any-Latin"),
-            russian: Translit::open("Russian-Latin/BGN"),
-            japanese: sample.iter().any(|l| has_kana(l)),
-        }
+        let japanese = sample.iter().any(|l| has_kana(l));
+        let jdict = if japanese && sample.iter().any(|l| has_han(l)) && japanese_reading("日本").is_none() { crate::jdict::Dict::load() } else { None };
+        Romanizer { any: Translit::open("Any-Latin"), russian: Translit::open("Russian-Latin/BGN"), japanese, jdict }
     }
 
     pub fn romanize(&self, s: &str) -> Option<String> {
@@ -128,9 +129,9 @@ impl Romanizer {
         }
         let any = self.any.as_ref()?;
         let src = if self.japanese && has_cjk(s) {
-            match japanese_reading(s) {
+            match japanese_reading(s).or_else(|| self.jdict.as_ref().and_then(|d| d.reading(s))) {
                 Some(r) => r,
-                // without Japanese reading data, kanji would come out as Chinese pinyin:
+                // without any Japanese reading, kanji would come out as Chinese pinyin:
                 // keep such lines in their original script instead
                 None if has_han(s) => return None,
                 None => s.to_string(),

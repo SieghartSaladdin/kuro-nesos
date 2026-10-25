@@ -51,8 +51,9 @@
   next/previous.
 - **Synced lyrics** from [LRCLIB](https://lrclib.net). The collapsed notch grows and shrinks with
   each line, long lines wrap on the music page.
-- **Romaji / romanization** (toggle with the `Aa` chip or the tray menu), fully offline:
-  Japanese → romaji, Chinese → pinyin, Korean → Revised Romanization, Russian → BGN Latin,
+- **Romaji / romanization** (toggle with the `Aa` chip or the tray menu), offline:
+  Japanese → romaji (kanji included, e.g. あの水平線が遠ざかっていく → *ano suiheisen ga
+  toozakatte iku*), Chinese → pinyin, Korean → Revised Romanization, Russian → BGN Latin,
   plus Greek, Thai, Arabic, ... through ICU (built into Windows).
 - **Pomodoro** focus timer with short/long breaks and a progress ring.
 - **Water reminder**: daily goal, bottle size and active hours, reminders spread over the day,
@@ -79,10 +80,10 @@ notch appears. Right-click the tray icon for options and *Start with Windows*.
 ### Requirements
 
 - Windows 10 1903+ or Windows 11 (64-bit)
-- For **kanji → romaji**: the Japanese language feature
-  (*Settings → Time & language → Language & region → Add a language → Japanese*; it does not
-  have to be your display language). Without it, lines containing kanji are shown in their
-  original script; kana-only lines and all other scripts are still romanized.
+- **Kanji → romaji** works out of the box: if Windows has Japanese reading data (the
+  Japanese language feature) it is used; otherwise Kuro Nesos downloads a 16 MB Japanese
+  dictionary (IPADIC) **once**, the first time a song has kanji, and reads kanji offline
+  from then on. Without either, kanji lines stay in their original script.
 
 ### Build from source
 
@@ -123,8 +124,10 @@ Set `KURO_DEBUG_FPS=1` to log the render frame rate.
 
 ## Privacy
 
-- **Online:** only the lyrics search. The track title and artist are sent to
-  `lrclib.net`. Nothing else leaves your PC; romanization is offline.
+- **Online:** the lyrics search (track title and artist are sent to `lrclib.net`), and,
+  only on PCs without Japanese reading data, a one-time download of the Japanese dictionary
+  from this project's GitHub releases. Lyrics themselves never leave your PC; romanization
+  is offline.
 - **Notifications:** mirroring Windows notifications needs your consent (Windows asks once).
   Their text is only shown in the notch, never stored.
 - **Local data:** settings, water log and to-do list in `%APPDATA%\KuroNesos`, shelf items and a
@@ -141,7 +144,7 @@ Rust with the [`windows`](https://github.com/microsoft/windows-rs) crate, no UI 
 | `src/ui/` | notch state machine (`mod.rs`), animations (`anim.rs`), input, painting, pages, vertical layouts, music, alerts, mascot, window helpers |
 | `src/media.rs` | Global System Media Transport Controls (title, art, timeline, commands) |
 | `src/lyrics.rs`, `src/json.rs` | LRCLIB client, LRC parser, minimal JSON reader |
-| `src/roman.rs` | romanization (ICU transliterator, Japanese reading analyzer, Hangul RR) |
+| `src/roman.rs`, `src/jdict.rs` | romanization (ICU transliterator, Japanese reading analyzer, IPADIC kanji reader, Hangul RR) |
 | `src/sys.rs` | battery, network, Bluetooth, notifications, keyboard layout, fullscreen detection, chime |
 | `src/model.rs`, `src/shelf.rs` | settings, water, to-do, shelf storage and OLE drag & drop |
 
@@ -154,6 +157,9 @@ Contributor notes (module map, conventions, frame pacing and memory budget) are 
 ## Credits
 
 - Synced lyrics: [LRCLIB](https://lrclib.net).
+- Kanji readings: [IPADIC](https://github.com/taku910/mecab) (mecab-ipadic-2.7.0),
+  © 2000–2003 Nara Institute of Science and Technology; the dictionary file is built with
+  `tools/make_ja_dict.py` and published as the `ja-dict-1` release.
 - Icons: Segoe Fluent Icons (shipped with Windows).
 
 ## License
